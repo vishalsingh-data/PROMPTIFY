@@ -1,4 +1,4 @@
-Copy everything below directly into your `README.md` file on GitHub.
+
 
 ````markdown
 # 🚀 PROMPTIFY
