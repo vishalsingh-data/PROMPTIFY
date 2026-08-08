@@ -4,43 +4,81 @@
 client and a local LLM server (ollama / llama.cpp), detecting prompt injection,
 sensitive data requests, and encoded payload attacks before they reach the model.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design.
+
 ---
 
-## Architecture
+## Services
 
-```
-Client → promptify-core (Rust/Axum) → upstream LLM
-                   ↕
-          promptify-ml (Python/FastAPI)
-```
+| Service | Language | Default port | Path |
+|---------|----------|-------------|------|
+| `promptify-core` | Rust / Axum | `11434` | `core/` |
+| `promptify-ml` | Python / FastAPI | `8500` | `ml-sidecar/` |
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full system map and request lifecycle.
+---
 
-## Stack
+## Running locally
 
-| Component | Language | Role |
-|-----------|----------|------|
-| `core/` | Rust (axum, tokio, reqwest) | Proxy, detection pipeline, decisions, logging |
-| `ml-sidecar/` | Python (FastAPI) | Entropy analysis, future ML classification |
-| `cli/` | Rust | CLI for status, log inspection, config validation |
+> **All commands are run from the repo root** (`c:\PROMPTIFY`) unless noted.
 
-## Quick Start
+### 1 — promptify-ml (ML sidecar)
 
 ```bash
-# 1. Start the ML sidecar
-cd ml-sidecar && pip install -r requirements.txt
-uvicorn main:app --port 8500
+cd ml-sidecar
+python -m venv venv
+# Windows:
+venv\Scripts\activate
+# macOS / Linux:
+source venv/bin/activate
 
-# 2. Start the core proxy
-cd core && cargo run
-
-# 3. Point your LLM client at localhost:11434 (instead of ollama's default)
+pip install -r requirements.txt
+uvicorn main:app --port 8500 --reload
 ```
+
+Health check: `curl http://localhost:8500/health`
+→ `{"status":"ok"}`
+
+### 2 — promptify-core (Rust proxy)
+
+```bash
+# From repo root:
+cargo run -p promptify-core
+```
+
+The port is read from `config/promptify.toml` (`listen_port = 11434`).
+
+Health check: `curl http://localhost:11434/health`
+→ `{"status":"ok","service":"promptify-core"}`
+
+### 3 — CLI (placeholder)
+
+```bash
+cargo run -p promptify-cli
+```
+
+---
 
 ## Configuration
 
-Edit `config/promptify.toml` — see inline comments for all options.
+Edit `config/promptify.toml`. Key fields:
+
+```toml
+[proxy]
+listen_port = 11434          # port promptify-core binds to
+upstream_url = "http://127.0.0.1:11435"  # real ollama / llama.cpp
+
+[ml_sidecar]
+url = "http://127.0.0.1:8500"
+timeout_ms = 500
+```
+
+---
 
 ## Project Status
 
-🚧 **Phase 1 — Architecture & Scaffold** (current)
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 0 | ✅ | Repo cleared, AGENTS.md / CLAUDE.md |
+| 1 | ✅ | Full scaffold: directory tree, stub modules, schemas |
+| 1b | ✅ | Cargo workspace, GET /health on both services |
+| 2 | ⬜ | Detection logic: RuleEngine, DecoderEngine, ScoringEngine, Logger |

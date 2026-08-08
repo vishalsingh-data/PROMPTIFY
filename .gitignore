@@ -1,6 +1,11 @@
 # Rust build artefacts
 target/
 
+# Python virtual environments
+venv/
+.venv/
+env/
+
 # Python bytecode
 __pycache__/
 *.py[cod]

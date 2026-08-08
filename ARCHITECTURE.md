@@ -163,11 +163,12 @@ CREATE TABLE requests (
 
 ```
 c:\PROMPTIFY\
+├── Cargo.toml               # Cargo workspace (members: core, cli)
 ├── core/                    # Rust crate — proxy + detection pipeline
 │   ├── Cargo.toml
 │   └── src/
-│       ├── main.rs
-│       ├── proxy.rs
+│       ├── main.rs          # startup wiring; reads port from config
+│       ├── proxy.rs         # router: GET /health ✅  POST /api/generate (stub)
 │       ├── config.rs
 │       ├── decision.rs
 │       ├── explain.rs
@@ -181,11 +182,12 @@ c:\PROMPTIFY\
 │           ├── mod.rs
 │           └── ruleset.json
 ├── ml-sidecar/              # Python FastAPI — entropy + future ML
-│   ├── main.py
+│   ├── main.py              # GET /health ✅  POST /analyze (stub)
 │   ├── entropy.py
 │   ├── classifier.py
 │   └── requirements.txt
-├── cli/                     # Rust CLI binary
+├── cli/                     # Rust CLI binary (placeholder)
+│   ├── Cargo.toml
 │   └── src/main.rs
 ├── extension/               # Phase 4 — browser extension
 ├── proxy-ca/                # Phase 5 — HTTPS MITM CA
@@ -206,4 +208,5 @@ c:\PROMPTIFY\
 |-------|--------|----------------|
 | 0 | ✅ | Repo cleared, AGENTS.md / CLAUDE.md committed |
 | 1 | ✅ | Full scaffold: directory tree, stub modules with doc comments, config/rule schemas, ARCHITECTURE.md |
+| 1b | ✅ | Cargo workspace (`core` + `cli`); `GET /health` live on both services; config port wiring |
 | 2 | ⬜ | Detection logic: RuleEngine, DecoderEngine, ScoringEngine, MlClient, Logger |

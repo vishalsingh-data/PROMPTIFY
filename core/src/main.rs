@@ -23,7 +23,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     // Load configuration from the canonical location.
-    let cfg = match config::Config::load(std::path::Path::new("../config/promptify.toml")) {
+    let cfg = match config::Config::load(std::path::Path::new("config/promptify.toml")) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("Failed to load config: {}", e);
