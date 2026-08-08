@@ -7,6 +7,7 @@
 //!                   assembly. It only persists exactly what it is given.
 
 use crate::decision::{Decision, Explanation};
+use rusqlite::{params, Connection};
 
 /// A complete record of one intercepted request, ready to be persisted.
 ///
@@ -24,7 +25,7 @@ use crate::decision::{Decision, Explanation};
 ///     decoded_payloads_json TEXT    NOT NULL
 /// );
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RequestRecord {
     /// ISO-8601 timestamp of when the request was intercepted.
     pub timestamp: String,
@@ -45,6 +46,7 @@ pub struct RequestRecord {
 }
 
 /// Async logger that persists `RequestRecord`s to SQLite without blocking callers.
+#[derive(Clone)]
 pub struct Logger {
     /// Filesystem path to the SQLite database file (under `data/`).
     pub db_path: String,
@@ -60,8 +62,28 @@ impl Logger {
     ///
     /// Must be called once at startup before any calls to `log_request`.
     pub async fn init(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO(Phase 2): open SQLite connection, execute CREATE TABLE IF NOT EXISTS.
-        todo!("Phase 2: initialise SQLite database and create requests table")
+        let db_path = self.db_path.clone();
+        
+        tokio::task::spawn_blocking(move || {
+            let conn = Connection::open(&db_path)?;
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS requests (
+                    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp             TEXT    NOT NULL,
+                    prompt_text           TEXT,
+                    prompt_hash           TEXT    NOT NULL,
+                    decision              TEXT    NOT NULL,
+                    risk_score            INTEGER NOT NULL,
+                    trust_score           INTEGER NOT NULL,
+                    explanation_json      TEXT    NOT NULL,
+                    decoded_payloads_json TEXT    NOT NULL
+                )",
+                [],
+            )?;
+            Ok::<(), rusqlite::Error>(())
+        }).await??;
+        
+        Ok(())
     }
 
     /// Persist a `RequestRecord` asynchronously.
@@ -69,9 +91,41 @@ impl Logger {
     /// Spawns a blocking task so the response path is never delayed.
     pub async fn log_request(
         &self,
-        _record: RequestRecord,
+        record: RequestRecord,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO(Phase 2): spawn tokio::task::spawn_blocking, INSERT record.
-        todo!("Phase 2: implement async INSERT into requests table")
+        let db_path = self.db_path.clone();
+        
+        tokio::task::spawn_blocking(move || {
+            let conn = Connection::open(&db_path)?;
+            let decision_str = match record.decision {
+                Decision::Allow => "ALLOW",
+                Decision::Warn => "WARN",
+                Decision::Block => "BLOCK",
+            };
+            
+            let explanation_json = serde_json::to_string(&record.explanation)
+                .unwrap_or_else(|_| "{}".to_string());
+                
+            conn.execute(
+                "INSERT INTO requests (
+                    timestamp, prompt_text, prompt_hash, decision,
+                    risk_score, trust_score, explanation_json, decoded_payloads_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    record.timestamp,
+                    record.prompt_text,
+                    record.prompt_hash,
+                    decision_str,
+                    record.risk_score,
+                    record.trust_score,
+                    explanation_json,
+                    record.decoded_payloads_json,
+                ],
+            )?;
+            
+            Ok::<(), rusqlite::Error>(())
+        }).await??;
+        
+        Ok(())
     }
 }

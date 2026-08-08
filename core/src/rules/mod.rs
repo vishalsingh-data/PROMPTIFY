@@ -8,6 +8,7 @@
 //!                   aggregating match scores into a final risk score (→ `scoring`),
 //!                   or any I/O beyond reading the single ruleset JSON file.
 
+use regex::Regex;
 use serde::Deserialize;
 use std::path::Path;
 
@@ -55,7 +56,9 @@ struct Ruleset {
 
 /// Loads and evaluates `ruleset.json` against incoming prompts.
 pub struct RuleEngine {
-    ruleset: Ruleset,
+    override_phrases: Vec<Regex>,
+    sensitive_keywords: Vec<Regex>,
+    role_manipulation_patterns: Vec<Regex>,
 }
 
 impl RuleEngine {
@@ -65,7 +68,22 @@ impl RuleEngine {
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let raw = std::fs::read_to_string(path)?;
         let ruleset: Ruleset = serde_json::from_str(&raw)?;
-        Ok(Self { ruleset })
+        
+        let compile = |patterns: Vec<String>| -> Result<Vec<Regex>, Box<dyn std::error::Error>> {
+            let mut compiled = Vec::new();
+            for p in patterns {
+                // Compile case-insensitive for robustness against simple obfuscation
+                let regex = Regex::new(&format!("(?i){}", p))?;
+                compiled.push(regex);
+            }
+            Ok(compiled)
+        };
+
+        Ok(Self {
+            override_phrases: compile(ruleset.override_phrases)?,
+            sensitive_keywords: compile(ruleset.sensitive_keywords)?,
+            role_manipulation_patterns: compile(ruleset.role_manipulation_patterns)?,
+        })
     }
 
     /// Evaluate `prompt` against all rule categories.
@@ -73,8 +91,25 @@ impl RuleEngine {
     /// Returns every `RuleMatch` found, in the order: override phrases →
     /// sensitive keywords → role-manipulation patterns. An empty `Vec` means
     /// no rules fired.
-    pub fn check(&self, _prompt: &str) -> Vec<RuleMatch> {
-        // TODO(Phase 2): iterate categories, run substring / regex matching.
-        todo!("Phase 2: implement pattern evaluation across all rule categories")
+    pub fn check(&self, prompt: &str) -> Vec<RuleMatch> {
+        let mut matches = Vec::new();
+
+        let mut check_category = |patterns: &[Regex], category: RuleCategory, weight: u8| {
+            for re in patterns {
+                if let Some(m) = re.find(prompt) {
+                    matches.push(RuleMatch {
+                        category: category.clone(),
+                        matched_pattern: m.as_str().to_string(),
+                        weight,
+                    });
+                }
+            }
+        };
+
+        check_category(&self.override_phrases, RuleCategory::OverridePhrase, WEIGHT_OVERRIDE_PHRASE);
+        check_category(&self.sensitive_keywords, RuleCategory::SensitiveKeyword, WEIGHT_SENSITIVE_KEYWORD);
+        check_category(&self.role_manipulation_patterns, RuleCategory::RoleManipulation, WEIGHT_ROLE_MANIPULATION);
+
+        matches
     }
 }

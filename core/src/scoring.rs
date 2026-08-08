@@ -32,8 +32,22 @@ impl ScoringEngine {
     /// - `risk_score >= thresholds.block_at` → `Decision::Block`
     /// - `risk_score >= thresholds.warn_at`  → `Decision::Warn`
     /// - otherwise                           → `Decision::Allow`
-    pub fn score(&self, _signals: &[Signal]) -> (u8, Decision) {
-        // TODO(Phase 2): implement weighted signal aggregation.
-        todo!("Phase 2: implement signal aggregation and decision mapping")
+    pub fn score(&self, signals: &[Signal]) -> (u8, Decision) {
+        let mut total_score: u16 = 0;
+        for s in signals {
+            total_score += s.score as u16;
+        }
+        
+        let risk_score = if total_score > 100 { 100 } else { total_score as u8 };
+        
+        let decision = if risk_score >= self.thresholds.block_at {
+            Decision::Block
+        } else if risk_score >= self.thresholds.warn_at {
+            Decision::Warn
+        } else {
+            Decision::Allow
+        };
+        
+        (risk_score, decision)
     }
 }
