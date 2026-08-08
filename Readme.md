@@ -40,6 +40,13 @@ Health check: `curl http://localhost:8500/health`
 
 ### 2 — promptify-core (Rust proxy)
 
+> **⚠️ Port conflict**: promptify-core binds to port `11434` — the same port
+> ollama uses by default. **Stop ollama before starting promptify-core**,
+> otherwise ollama will hold the port and our server cannot bind.
+>
+> On Windows (ollama tray app): right-click the ollama tray icon → Quit.
+> Then verify the port is free: `netstat -ano | findstr :11434` (should return nothing).
+
 ```bash
 # From repo root:
 cargo run -p promptify-core
