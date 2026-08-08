@@ -99,6 +99,33 @@ async fn intercept_handler(
         Err(e) => return (axum::http::StatusCode::BAD_REQUEST, format!("Failed to read request body: {}", e)).into_response(),
     };
 
+    // Phase 3.2: Content inspection (non-blocking log only)
+    println!("--- DEBUG BODY BYTES ---: {:?}", body_bytes);
+    if let Ok(json_body) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+        let mut extracted_prompt = String::new();
+
+        // Attempt to extract standard completions format: {"prompt": "..."}
+        if let Some(p) = json_body.get("prompt").and_then(|v| v.as_str()) {
+            extracted_prompt = p.to_string();
+        } 
+        // Attempt to extract chat completions format: {"messages": [{"content": "..."}]}
+        else if let Some(messages) = json_body.get("messages").and_then(|v| v.as_array()) {
+            for msg in messages {
+                if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
+                    extracted_prompt.push_str(content);
+                    extracted_prompt.push('\n');
+                }
+            }
+        }
+
+        if !extracted_prompt.is_empty() {
+            let rule_matches = state.rules.check(&extracted_prompt);
+            if !rule_matches.is_empty() {
+                tracing::info!("Rule matches found for prompt: {:?}", rule_matches);
+            }
+        }
+    }
+
     // 2. Forward request to upstream
     let reqwest_req = state.http_client.request(method, &upstream)
         .headers(headers)

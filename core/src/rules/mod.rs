@@ -56,59 +56,73 @@ struct Ruleset {
 
 /// Loads and evaluates `ruleset.json` against incoming prompts.
 pub struct RuleEngine {
-    override_phrases: Vec<Regex>,
-    sensitive_keywords: Vec<Regex>,
+    override_phrases: Vec<String>,
+    sensitive_keywords: Vec<String>,
     role_manipulation_patterns: Vec<Regex>,
 }
 
 impl RuleEngine {
     /// Load `ruleset.json` from `path`, deserialise, and prepare for evaluation.
-    ///
-    /// Pattern compilation (regex pre-compilation) will be added in Phase 2.
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let raw = std::fs::read_to_string(path)?;
         let ruleset: Ruleset = serde_json::from_str(&raw)?;
         
-        let compile = |patterns: Vec<String>| -> Result<Vec<Regex>, Box<dyn std::error::Error>> {
-            let mut compiled = Vec::new();
-            for p in patterns {
-                // Compile case-insensitive for robustness against simple obfuscation
-                let regex = Regex::new(&format!("(?i){}", p))?;
-                compiled.push(regex);
-            }
-            Ok(compiled)
-        };
+        // Lowercase strings for case-insensitive substring matching
+        let override_phrases = ruleset.override_phrases.into_iter().map(|s| s.to_lowercase()).collect();
+        let sensitive_keywords = ruleset.sensitive_keywords.into_iter().map(|s| s.to_lowercase()).collect();
+
+        // Compile regexes for role patterns
+        let mut role_manipulation_patterns = Vec::new();
+        for p in ruleset.role_manipulation_patterns {
+            role_manipulation_patterns.push(Regex::new(&p)?);
+        }
 
         Ok(Self {
-            override_phrases: compile(ruleset.override_phrases)?,
-            sensitive_keywords: compile(ruleset.sensitive_keywords)?,
-            role_manipulation_patterns: compile(ruleset.role_manipulation_patterns)?,
+            override_phrases,
+            sensitive_keywords,
+            role_manipulation_patterns,
         })
     }
 
     /// Evaluate `prompt` against all rule categories.
     ///
     /// Returns every `RuleMatch` found, in the order: override phrases →
-    /// sensitive keywords → role-manipulation patterns. An empty `Vec` means
-    /// no rules fired.
+    /// sensitive keywords → role-manipulation patterns.
     pub fn check(&self, prompt: &str) -> Vec<RuleMatch> {
         let mut matches = Vec::new();
+        let lower_prompt = prompt.to_lowercase();
 
-        let mut check_category = |patterns: &[Regex], category: RuleCategory, weight: u8| {
-            for re in patterns {
-                if let Some(m) = re.find(prompt) {
-                    matches.push(RuleMatch {
-                        category: category.clone(),
-                        matched_pattern: m.as_str().to_string(),
-                        weight,
-                    });
-                }
+        // Check exact substrings (case-insensitive)
+        for phrase in &self.override_phrases {
+            if lower_prompt.contains(phrase) {
+                matches.push(RuleMatch {
+                    category: RuleCategory::OverridePhrase,
+                    matched_pattern: phrase.clone(),
+                    weight: WEIGHT_OVERRIDE_PHRASE,
+                });
             }
-        };
+        }
 
-        check_category(&self.override_phrases, RuleCategory::OverridePhrase, WEIGHT_OVERRIDE_PHRASE);
-        check_category(&self.sensitive_keywords, RuleCategory::SensitiveKeyword, WEIGHT_SENSITIVE_KEYWORD);
-        check_category(&self.role_manipulation_patterns, RuleCategory::RoleManipulation, WEIGHT_ROLE_MANIPULATION);
+        for keyword in &self.sensitive_keywords {
+            if lower_prompt.contains(keyword) {
+                matches.push(RuleMatch {
+                    category: RuleCategory::SensitiveKeyword,
+                    matched_pattern: keyword.clone(),
+                    weight: WEIGHT_SENSITIVE_KEYWORD,
+                });
+            }
+        }
+
+        // Check regex patterns
+        for re in &self.role_manipulation_patterns {
+            if let Some(m) = re.find(prompt) {
+                matches.push(RuleMatch {
+                    category: RuleCategory::RoleManipulation,
+                    matched_pattern: m.as_str().to_string(),
+                    weight: WEIGHT_ROLE_MANIPULATION,
+                });
+            }
+        }
 
         matches
     }
