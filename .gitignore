@@ -1,0 +1,20 @@
+# Rust build artefacts
+target/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Runtime data — SQLite logs, NEVER committed
+data/
+
+# Environment / secrets
+.env
+*.env
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db

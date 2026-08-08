@@ -1,0 +1,37 @@
+[package]
+name = "promptify-core"
+version = "0.1.0"
+edition = "2021"
+description = "Local-first AI firewall — core proxy and detection engine"
+
+[dependencies]
+# HTTP server
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client (for upstream LLM + ML sidecar)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialisation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Config parsing
+toml = "0.8"
+
+# SQLite (bundled so no system libsqlite3 required)
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Structured logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Prompt hashing
+sha2 = "0.10"
+hex = "0.4"
+
+# Pattern matching for rules
+regex = "1"
+
+# Request IDs
+uuid = { version = "1", features = ["v4"] }

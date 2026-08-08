@@ -1,0 +1,28 @@
+[proxy]
+listen_port = 11434
+upstream_url = "http://127.0.0.1:11435"
+
+[backend]
+# Supported values: "ollama", "llamacpp", "generic_openai_compatible"
+type = "ollama"
+
+[thresholds]
+# Risk score at which a request is blocked outright (0–100).
+block_at = 70
+# Risk score at which a request is flagged with a warning (0–100).
+warn_at = 30
+
+[logging]
+# When true, the full prompt text is stored in SQLite alongside the hash.
+# Set to false to store only the hash for privacy.
+store_full_prompt_text = true
+
+[compression]
+# When true, allowed prompts are compressed before forwarding to the upstream LLM.
+enabled = false
+
+[ml_sidecar]
+# Base URL of the promptify-ml FastAPI sidecar.
+url = "http://127.0.0.1:8500"
+# Maximum time (ms) to wait for a sidecar response before treating it as unavailable.
+timeout_ms = 500
