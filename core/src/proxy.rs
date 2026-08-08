@@ -33,6 +33,8 @@ pub struct AppState {
     pub ml: Arc<MlClient>,
     pub scoring: Arc<ScoringEngine>,
     pub logger: Logger,
+    pub http_client: reqwest::Client,
+    pub config: Arc<crate::config::Config>,
 }
 
 /// Build and return the Axum router wired to all supported paths.
@@ -70,64 +72,54 @@ async fn health_handler() -> Json<Value> {
 ///                        → `ResponseAnalyzer` on streamed chunks → client
 /// 7b. `Decision::Warn`   → forward + attach warning annotation
 /// 7c. `Decision::Block`  → return synthetic refusal; upstream LLM never contacted
-async fn intercept_handler(State(state): State<AppState>) -> (axum::http::StatusCode, &'static str) {
-    // Stub prompt extraction for Phase 2 (to be replaced in Phase 3 when BackendAdapter is added)
-    let prompt = "TODO_extract_real_prompt_from_body";
+async fn intercept_handler(
+    State(state): State<AppState>,
+    mut req: axum::extract::Request,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
 
-    // 1. Check rules
-    let rule_matches = state.rules.check(prompt);
+    // Phase 2 Detection Logic is temporarily bypassed for pure passthrough in Phase 3.1
+    // (In Phase 3.2, we will inspect the request body here before forwarding).
 
-    // 2. Decode & re-check decoded text
-    let decoded = state.decoder.decode(prompt);
-    let mut decoded_matches = Vec::new();
-    for d in &decoded {
-        decoded_matches.extend(state.rules.check(&d.plaintext));
-    }
+    // 1. Extract request components
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let mut headers = req.headers().clone();
 
-    // 3. ML analysis
-    let ml_signal = state.ml.analyze(prompt).await.unwrap_or(crate::ml_client::MlSignal {
-        entropy: 0.0,
-        flagged: false,
-    });
+    // Strip Host header so reqwest sets the correct upstream host
+    headers.remove(axum::http::header::HOST);
 
-    // 4. Scoring
-    let mut signals = Vec::new();
-    for rm in rule_matches.iter().chain(decoded_matches.iter()) {
-        signals.push(Signal { label: rm.matched_pattern.clone(), score: rm.weight });
-    }
-    if ml_signal.flagged {
-        signals.push(Signal { label: "ml_entropy".to_string(), score: 20 });
-    }
+    let path = uri.path();
+    let query = uri.query().map(|q| format!("?{}", q)).unwrap_or_default();
+    let upstream = format!("{}{}{}", state.config.proxy.upstream_url.trim_end_matches('/'), path, query);
 
-    let (risk_score, decision) = state.scoring.score(&signals);
-
-    // 5. Build Explanation
-    let explanation = build_explanation(&signals, &decision, risk_score);
-
-    // 6. Logging
-    let mut hasher = Sha256::new();
-    hasher.update(prompt);
-    let hash_str = hex::encode(hasher.finalize());
-    
-    // We use a stub ISO-8601 string here for Phase 2 instead of importing chrono yet.
-    let timestamp = "2026-08-08T00:00:00Z".to_string(); 
-
-    let record = RequestRecord {
-        timestamp,
-        prompt_text: Some(prompt.to_string()),
-        prompt_hash: hash_str,
-        decision: decision.clone(),
-        risk_score,
-        trust_score: 100, // Phase 3 placeholder
-        explanation,
-        decoded_payloads_json: "[]".to_string(), // Serialize if needed later
+    // Read full request body (prompts are small enough to buffer safely)
+    let body_bytes = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+        Ok(b) => b,
+        Err(e) => return (axum::http::StatusCode::BAD_REQUEST, format!("Failed to read request body: {}", e)).into_response(),
     };
 
-    let _ = state.logger.log_request(record).await;
+    // 2. Forward request to upstream
+    let reqwest_req = state.http_client.request(method, &upstream)
+        .headers(headers)
+        .body(body_bytes);
 
-    // 7. Forward (Stubbed until Phase 3)
-    (
-        axum::http::StatusCode::NOT_IMPLEMENTED,
-        "promptify-core: interception pipeline executed, but upstream forwarding not yet implemented",
-    )
+    let upstream_resp = match reqwest_req.send().await {
+        Ok(r) => r,
+        Err(e) => return (axum::http::StatusCode::BAD_GATEWAY, format!("Upstream LLM error: {}", e)).into_response(),
+    };
+
+    // 3. Stream response back to client
+    let mut response_builder = axum::http::Response::builder()
+        .status(upstream_resp.status());
+
+    for (name, value) in upstream_resp.headers() {
+        response_builder = response_builder.header(name, value);
+    }
+
+    // Convert reqwest's stream into axum's Body to forward chunks as they arrive
+    let stream = upstream_resp.bytes_stream();
+    let body = axum::body::Body::from_stream(stream);
+
+    response_builder.body(body).unwrap().into_response()
 }

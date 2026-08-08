@@ -10,7 +10,7 @@ axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 
 # HTTP client (for upstream LLM + ML sidecar)
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # Serialisation
 serde = { version = "1", features = ["derive"] }

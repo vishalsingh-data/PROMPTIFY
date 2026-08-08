@@ -73,6 +73,8 @@ async fn main() {
         ml,
         scoring,
         logger,
+        http_client: reqwest::Client::new(),
+        config: Arc::new(cfg),
     };
 
     // Build the Axum router and hand off to proxy.

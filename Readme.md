@@ -38,10 +38,25 @@ uvicorn main:app --port 8500 --reload
 Health check: `curl http://localhost:8500/health`
 → `{"status":"ok"}`
 
-### 2 — promptify-core (Rust proxy)
+### 2 — Upstream LLM (ollama)
+
+Since `promptify-core` binds to the standard ollama port (`11434`), you must run the real ollama server on an alternate port (configured in `promptify.toml` as `11435`).
+
+**To start ollama on the alternate port:**
+
+```bash
+# On Linux / macOS / WSL:
+OLLAMA_HOST=127.0.0.1:11435 ollama serve
+
+# On Windows (PowerShell):
+$env:OLLAMA_HOST="127.0.0.1:11435"
+ollama serve
+```
+
+### 3 — promptify-core (Rust proxy)
 
 > **⚠️ Port conflict**: promptify-core binds to port `11434` — the same port
-> ollama uses by default. **Stop ollama before starting promptify-core**,
+> ollama uses by default. **Stop the default ollama background service before starting promptify-core**,
 > otherwise ollama will hold the port and our server cannot bind.
 >
 > On Windows (ollama tray app): right-click the ollama tray icon → Quit.
