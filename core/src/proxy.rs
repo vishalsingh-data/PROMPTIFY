@@ -119,9 +119,23 @@ async fn intercept_handler(
         }
 
         if !extracted_prompt.is_empty() {
-            let rule_matches = state.rules.check(&extracted_prompt);
-            if !rule_matches.is_empty() {
-                tracing::info!("Rule matches found for prompt: {:?}", rule_matches);
+            let mut all_rule_matches = state.rules.check(&extracted_prompt);
+            if !all_rule_matches.is_empty() {
+                tracing::info!("Rule matches found for raw prompt: {:?}", all_rule_matches);
+            }
+
+            // Phase 3.3: Recursive Decoder cascade
+            let decoded_payloads = state.decoder.decode(&extracted_prompt);
+            for payload in decoded_payloads {
+                let mut decoded_matches = state.rules.check(&payload.plaintext);
+                if !decoded_matches.is_empty() {
+                    // Boost severity for being hidden in an encoding
+                    for m in &mut decoded_matches {
+                        m.weight = m.weight.saturating_add(20);
+                    }
+                    tracing::info!("Rule matches found in DECODED payload (scheme: {:?}, depth: {}): {:?}", payload.scheme, payload.depth, decoded_matches);
+                    all_rule_matches.append(&mut decoded_matches);
+                }
             }
         }
     }
