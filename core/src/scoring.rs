@@ -10,6 +10,8 @@
 use crate::config::ThresholdConfig;
 use crate::decision::Decision;
 use crate::explain::Signal;
+use crate::rules::RuleMatch;
+use crate::ml_client::MlSignal;
 
 /// Aggregates detection signals into a final risk score and `Decision`.
 pub struct ScoringEngine {
@@ -22,20 +24,42 @@ impl ScoringEngine {
         Self { thresholds }
     }
 
-    /// Merge `signals` into a 0–100 risk score and derive the `Decision`.
-    ///
-    /// Returns `(risk_score, decision)`. The caller should pass the same `signals`
-    /// slice to `explain::build_explanation` to produce the accompanying `Explanation`.
-    ///
-    /// Scoring rules (Phase 2 implementation):
-    /// - Clamp the sum of all signal scores to [0, 100].
-    /// - `risk_score >= thresholds.block_at` → `Decision::Block`
-    /// - `risk_score >= thresholds.warn_at`  → `Decision::Warn`
-    /// - otherwise                           → `Decision::Allow`
-    pub fn score(&self, signals: &[Signal]) -> (u8, Decision) {
+    /// Merge signals into a 0–100 risk score and derive the `Decision`.
+    pub fn score(
+        &self,
+        raw_rules: &[RuleMatch],
+        decoded_rules: &[RuleMatch],
+        ml_signal: Option<&MlSignal>,
+    ) -> (u8, Decision, Vec<Signal>) {
+        let mut signals = Vec::new();
         let mut total_score: u16 = 0;
-        for s in signals {
-            total_score += s.score as u16;
+
+        for m in raw_rules {
+            signals.push(Signal {
+                label: format!("rule:{:?}", m.category),
+                score: m.weight,
+            });
+            total_score += m.weight as u16;
+        }
+
+        for m in decoded_rules {
+            let adjusted_weight = (m.weight as f32 * 1.5).round() as u8;
+            signals.push(Signal {
+                label: format!("decoded_rule:{:?}", m.category),
+                score: adjusted_weight,
+            });
+            total_score += adjusted_weight as u16;
+        }
+
+        if let Some(ml) = ml_signal {
+            if ml.high_entropy_flag {
+                let ml_score = 30; // Assign 30 for high entropy
+                signals.push(Signal {
+                    label: "ml:high_entropy".to_string(),
+                    score: ml_score,
+                });
+                total_score += ml_score as u16;
+            }
         }
         
         let risk_score = if total_score > 100 { 100 } else { total_score as u8 };
@@ -48,6 +72,6 @@ impl ScoringEngine {
             Decision::Allow
         };
         
-        (risk_score, decision)
+        (risk_score, decision, signals)
     }
 }

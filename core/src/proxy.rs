@@ -99,10 +99,13 @@ async fn intercept_handler(
         Err(e) => return (axum::http::StatusCode::BAD_REQUEST, format!("Failed to read request body: {}", e)).into_response(),
     };
 
-    // Phase 3.2: Content inspection (non-blocking log only)
-    println!("--- DEBUG BODY BYTES ---: {:?}", body_bytes);
+    tracing::info!("--- INCOMING REQUEST --- bytes: {:?}", body_bytes.len());
+
+    let mut warning_header = None;
+
     if let Ok(json_body) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
         let mut extracted_prompt = String::new();
+        tracing::info!("Parsed JSON body.");
 
         // Attempt to extract standard completions format: {"prompt": "..."}
         if let Some(p) = json_body.get("prompt").and_then(|v| v.as_str()) {
@@ -119,30 +122,43 @@ async fn intercept_handler(
         }
 
         if !extracted_prompt.is_empty() {
-            let mut all_rule_matches = state.rules.check(&extracted_prompt);
-            if !all_rule_matches.is_empty() {
-                tracing::info!("Rule matches found for raw prompt: {:?}", all_rule_matches);
-            }
+            let all_rule_matches = state.rules.check(&extracted_prompt);
 
             // Phase 3.3: Recursive Decoder cascade
             let decoded_payloads = state.decoder.decode(&extracted_prompt);
+            let mut all_decoded_matches = Vec::new();
             for payload in &decoded_payloads {
                 let mut decoded_matches = state.rules.check(&payload.plaintext);
-                if !decoded_matches.is_empty() {
-                    // Boost severity for being hidden in an encoding
-                    for m in &mut decoded_matches {
-                        m.weight = m.weight.saturating_add(20);
-                    }
-                    tracing::info!("Rule matches found in DECODED payload (scheme: {:?}, depth: {}): {:?}", payload.scheme, payload.depth, decoded_matches);
-                    all_rule_matches.append(&mut decoded_matches);
-                }
+                all_decoded_matches.append(&mut decoded_matches);
             }
 
             // Phase 3.4: ML Sidecar Entropy Analysis
             let decoded_plaintext: Vec<&str> = decoded_payloads.iter().map(|p| p.plaintext.as_str()).collect();
-            match state.ml.analyze(&extracted_prompt, decoded_plaintext).await {
-                Ok(ml_signal) => tracing::info!("ML Sidecar signal: {:?}", ml_signal),
-                Err(e) => tracing::warn!("ML Sidecar analysis failed: {}", e),
+            let ml_result = state.ml.analyze(&extracted_prompt, decoded_plaintext).await;
+            let ml_signal = ml_result.as_ref().ok();
+
+            // Phase 3.5: Risk Scoring and Decision
+            let (risk_score, decision, signals) = state.scoring.score(&all_rule_matches, &all_decoded_matches, ml_signal);
+            let explanation = build_explanation(&signals, &decision, risk_score);
+
+            match decision {
+                Decision::Block => {
+                    tracing::warn!("Blocking request. Score: {} - {}", risk_score, explanation.summary);
+                    let synthetic = json!({
+                        "promptify_blocked": true,
+                        "risk_score": risk_score,
+                        "reason": explanation.summary,
+                        "reasons": explanation.reasons,
+                    });
+                    return (axum::http::StatusCode::FORBIDDEN, axum::Json(synthetic)).into_response();
+                }
+                Decision::Warn => {
+                    tracing::info!("Warning request. Score: {} - {}", risk_score, explanation.summary);
+                    warning_header = Some(explanation.summary);
+                }
+                Decision::Allow => {
+                    tracing::info!("Allowing request. Score: {}", risk_score);
+                }
             }
         }
     }
@@ -163,6 +179,12 @@ async fn intercept_handler(
 
     for (name, value) in upstream_resp.headers() {
         response_builder = response_builder.header(name, value);
+    }
+    
+    if let Some(warn_msg) = warning_header {
+        if let Ok(hv) = axum::http::HeaderValue::from_str(&warn_msg) {
+            response_builder = response_builder.header("X-Promptify-Warning", hv);
+        }
     }
 
     // Convert reqwest's stream into axum's Body to forward chunks as they arrive

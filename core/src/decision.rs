@@ -27,9 +27,9 @@ pub enum Decision {
 pub struct Explanation {
     /// Short one-line summary shown in CLI output and log previews.
     pub summary: String,
-    /// Ordered list of detection signals that contributed to the decision,
+    /// Ordered list of plain-English reasons that contributed to the decision,
     /// from highest-scoring to lowest.
-    pub signals: Vec<String>,
+    pub reasons: Vec<String>,
     /// Risk score (0–100) at the moment the decision was made.
     pub risk_score: u8,
 }

@@ -38,25 +38,41 @@ pub fn build_explanation(
         Decision::Allow => "Request passed all checks.".to_string(),
         Decision::Warn => {
             if let Some(top) = sorted_signals.first() {
-                format!("Warning triggered primarily by {}", top.label)
+                format!("Warning triggered primarily by: {}", format_label(&top.label))
             } else {
                 "Warning triggered by unknown signals.".to_string()
             }
         },
         Decision::Block => {
             if let Some(top) = sorted_signals.first() {
-                format!("Blocked primarily due to {}", top.label)
+                format!("Blocked primarily due to: {}", format_label(&top.label))
             } else {
                 "Blocked by unknown signals.".to_string()
             }
         }
     };
 
-    let signal_labels = sorted_signals.into_iter().map(|s| format!("{} (score: {})", s.label, s.score)).collect();
+    let reasons = sorted_signals
+        .into_iter()
+        .map(|s| format!("{} (score: {})", format_label(&s.label), s.score))
+        .collect();
 
     Explanation {
         summary,
-        signals: signal_labels,
+        reasons,
         risk_score,
+    }
+}
+
+fn format_label(label: &str) -> String {
+    match label {
+        "rule:OverridePhrase" => "Detected an attempt to override system instructions".to_string(),
+        "rule:SensitiveKeyword" => "Detected potentially sensitive information (e.g. credentials or PII)".to_string(),
+        "rule:RoleManipulation" => "Detected an attempt to manipulate the AI's role or persona".to_string(),
+        "decoded_rule:OverridePhrase" => "Detected an encoded attempt to override system instructions".to_string(),
+        "decoded_rule:SensitiveKeyword" => "Detected encoded sensitive information".to_string(),
+        "decoded_rule:RoleManipulation" => "Detected an encoded attempt to manipulate the AI's role".to_string(),
+        "ml:high_entropy" => "Detected an unusually high entropy string (potential obfuscation or payload)".to_string(),
+        _ => format!("Unknown detection signal ({})", label),
     }
 }
