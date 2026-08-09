@@ -9,9 +9,10 @@
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 /// The encoding scheme identified in a decoded payload.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EncodingScheme {
     Base64,
     UrlEncoding,
@@ -21,7 +22,7 @@ pub enum EncodingScheme {
 }
 
 /// A single decoded payload extracted from the prompt.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecodedPayload {
     /// The encoding scheme that was detected.
     pub scheme: EncodingScheme,

@@ -141,6 +141,33 @@ async fn intercept_handler(
             let (risk_score, decision, signals) = state.scoring.score(&all_rule_matches, &all_decoded_matches, ml_signal);
             let explanation = build_explanation(&signals, &decision, risk_score);
 
+            // Phase 3.7: Logging
+            let timestamp = chrono::Utc::now().to_rfc3339();
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(extracted_prompt.as_bytes());
+            let prompt_hash = hex::encode(hasher.finalize());
+
+            let prompt_text = if state.config.logging.store_full_prompt_text {
+                Some(extracted_prompt.clone())
+            } else {
+                None
+            };
+            
+            let decoded_payloads_json = serde_json::to_string(&decoded_payloads).unwrap_or_else(|_| "[]".to_string());
+            
+            let record = RequestRecord {
+                timestamp,
+                prompt_text,
+                prompt_hash,
+                decision: decision.clone(),
+                risk_score,
+                trust_score: 100, // Hardcoded for Phase 3
+                explanation: explanation.clone(),
+                decoded_payloads_json,
+            };
+            
+            state.logger.log_request(record);
+
             match decision {
                 Decision::Block => {
                     tracing::warn!("Blocking request. Score: {} - {}", risk_score, explanation.summary);

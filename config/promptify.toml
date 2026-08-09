@@ -15,7 +15,7 @@ warn_at = 30
 [logging]
 # When true, the full prompt text is stored in SQLite alongside the hash.
 # Set to false to store only the hash for privacy.
-store_full_prompt_text = true
+store_full_prompt_text = false
 
 [compression]
 # When true, allowed prompts are compressed before forwarding to the upstream LLM.

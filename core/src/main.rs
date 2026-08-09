@@ -37,14 +37,14 @@ async fn main() {
     tracing::info!("promptify-core listening on {}", addr);
 
     // Initialise Database
-    let logger = logging::Logger::new("data/requests.db".to_string());
+    let mut logger = logging::Logger::new("data/promptify.db".to_string());
     if let Err(e) = std::fs::create_dir_all("data") {
         tracing::error!("Failed to create data directory: {}", e);
         std::process::exit(1);
     }
     if let Err(e) = logger.init().await {
-        tracing::error!("Failed to init logger DB: {}", e);
-        std::process::exit(1);
+        tracing::error!("Failed to init logger DB (non-fatal): {}", e);
+        // Do NOT exit!
     }
 
     // Load Ruleset

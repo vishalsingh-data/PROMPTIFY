@@ -8,6 +8,7 @@
 
 use crate::decision::{Decision, Explanation};
 use rusqlite::{params, Connection};
+use tokio::sync::mpsc;
 
 /// A complete record of one intercepted request, ready to be persisted.
 ///
@@ -50,82 +51,94 @@ pub struct RequestRecord {
 pub struct Logger {
     /// Filesystem path to the SQLite database file (under `data/`).
     pub db_path: String,
+    sender: Option<mpsc::UnboundedSender<RequestRecord>>,
 }
 
 impl Logger {
     /// Create a new `Logger` targeting `db_path`.
     pub fn new(db_path: String) -> Self {
-        Self { db_path }
+        Self { db_path, sender: None }
     }
 
     /// Open (or create) the database and ensure the `requests` table exists.
-    ///
-    /// Must be called once at startup before any calls to `log_request`.
-    pub async fn init(&self) -> Result<(), Box<dyn std::error::Error>> {
+    /// Spawns a background thread that continuously reads from the channel.
+    pub async fn init(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let db_path = self.db_path.clone();
         
+        let (tx, mut rx) = mpsc::unbounded_channel::<RequestRecord>();
+        self.sender = Some(tx);
+        
+        tokio::task::spawn_blocking({
+            let db_path = db_path.clone();
+            move || {
+                if let Ok(conn) = Connection::open(&db_path) {
+                    let _ = conn.execute(
+                        "CREATE TABLE IF NOT EXISTS requests (
+                            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                            timestamp             TEXT    NOT NULL,
+                            prompt_text           TEXT,
+                            prompt_hash           TEXT    NOT NULL,
+                            decision              TEXT    NOT NULL,
+                            risk_score            INTEGER NOT NULL,
+                            trust_score           INTEGER NOT NULL,
+                            explanation_json      TEXT    NOT NULL,
+                            decoded_payloads_json TEXT    NOT NULL
+                        )",
+                        [],
+                    );
+                }
+            }
+        }).await?;
+        
         tokio::task::spawn_blocking(move || {
-            let conn = Connection::open(&db_path)?;
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS requests (
-                    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp             TEXT    NOT NULL,
-                    prompt_text           TEXT,
-                    prompt_hash           TEXT    NOT NULL,
-                    decision              TEXT    NOT NULL,
-                    risk_score            INTEGER NOT NULL,
-                    trust_score           INTEGER NOT NULL,
-                    explanation_json      TEXT    NOT NULL,
-                    decoded_payloads_json TEXT    NOT NULL
-                )",
-                [],
-            )?;
-            Ok::<(), rusqlite::Error>(())
-        }).await??;
+            let conn = match Connection::open(&db_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("Failed to open DB for logging thread: {}", e);
+                    return;
+                }
+            };
+            
+            while let Some(record) = rx.blocking_recv() {
+                let decision_str = match record.decision {
+                    Decision::Allow => "ALLOW",
+                    Decision::Warn => "WARN",
+                    Decision::Block => "BLOCK",
+                };
+                
+                let explanation_json = serde_json::to_string(&record.explanation)
+                    .unwrap_or_else(|_| "{}".to_string());
+                    
+                if let Err(e) = conn.execute(
+                    "INSERT INTO requests (
+                        timestamp, prompt_text, prompt_hash, decision,
+                        risk_score, trust_score, explanation_json, decoded_payloads_json
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        record.timestamp,
+                        record.prompt_text,
+                        record.prompt_hash,
+                        decision_str,
+                        record.risk_score,
+                        record.trust_score,
+                        explanation_json,
+                        record.decoded_payloads_json,
+                    ],
+                ) {
+                    tracing::warn!("Failed to insert log record: {}", e);
+                }
+            }
+        });
         
         Ok(())
     }
 
     /// Persist a `RequestRecord` asynchronously.
     ///
-    /// Spawns a blocking task so the response path is never delayed.
-    pub async fn log_request(
-        &self,
-        record: RequestRecord,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let db_path = self.db_path.clone();
-        
-        tokio::task::spawn_blocking(move || {
-            let conn = Connection::open(&db_path)?;
-            let decision_str = match record.decision {
-                Decision::Allow => "ALLOW",
-                Decision::Warn => "WARN",
-                Decision::Block => "BLOCK",
-            };
-            
-            let explanation_json = serde_json::to_string(&record.explanation)
-                .unwrap_or_else(|_| "{}".to_string());
-                
-            conn.execute(
-                "INSERT INTO requests (
-                    timestamp, prompt_text, prompt_hash, decision,
-                    risk_score, trust_score, explanation_json, decoded_payloads_json
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    record.timestamp,
-                    record.prompt_text,
-                    record.prompt_hash,
-                    decision_str,
-                    record.risk_score,
-                    record.trust_score,
-                    explanation_json,
-                    record.decoded_payloads_json,
-                ],
-            )?;
-            
-            Ok::<(), rusqlite::Error>(())
-        }).await??;
-        
-        Ok(())
+    /// Silently queues the request for background insertion.
+    pub fn log_request(&self, record: RequestRecord) {
+        if let Some(tx) = &self.sender {
+            let _ = tx.send(record); // Fail silently if channel dropped
+        }
     }
 }
