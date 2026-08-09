@@ -8,6 +8,8 @@
 //!                   in `proxy.rs` before forwarding).
 
 use crate::decision::Decision;
+use crate::rules::RuleEngine;
+use std::sync::Arc;
 
 /// Analyses LLM response chunks in a rolling character window.
 ///
@@ -18,14 +20,17 @@ pub struct ResponseAnalyzer {
     pub window_size: usize,
     /// Internal rolling buffer of recent response text.
     buffer: String,
+    /// Reference to the RuleEngine
+    rules: Arc<RuleEngine>,
 }
 
 impl ResponseAnalyzer {
     /// Create a new `ResponseAnalyzer` with the given window size in characters.
-    pub fn new(window_size: usize) -> Self {
+    pub fn new(window_size: usize, rules: Arc<RuleEngine>) -> Self {
         Self {
             window_size,
-            buffer: String::new(),
+            buffer: String::with_capacity(window_size * 2), // Pre-allocate some capacity
+            rules,
         }
     }
 
@@ -34,8 +39,30 @@ impl ResponseAnalyzer {
     /// - `Decision::Allow` — chunk is clean, forward to client.
     /// - `Decision::Block` — a rule fired; suppress this chunk and signal caller
     ///                        to close the stream.
-    pub fn analyze_chunk(&mut self, _chunk: &str) -> Decision {
-        // TODO(Phase 2): append chunk to buffer, trim to window_size, run RuleEngine.
-        todo!("Phase 2: implement rolling-window response analysis")
+    pub fn analyze_chunk(&mut self, chunk: &str) -> Decision {
+        self.buffer.push_str(chunk);
+        
+        // If buffer is too long, truncate from the left to keep only `window_size` characters
+        if self.buffer.len() > self.window_size {
+            // Find the character boundary
+            let start = self.buffer.len() - self.window_size;
+            let mut char_boundary = start;
+            while char_boundary < self.buffer.len() && !self.buffer.is_char_boundary(char_boundary) {
+                char_boundary += 1;
+            }
+            if char_boundary < self.buffer.len() {
+                // Keep everything from char_boundary onwards
+                let new_buffer = self.buffer[char_boundary..].to_string();
+                self.buffer = new_buffer;
+            }
+        }
+        
+        // Run rules check
+        let matches = self.rules.check(&self.buffer);
+        if !matches.is_empty() {
+            return Decision::Block;
+        }
+        
+        Decision::Allow
     }
 }

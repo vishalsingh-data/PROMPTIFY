@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 /// ```sql
 /// CREATE TABLE IF NOT EXISTS requests (
 ///     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+///     event_type            TEXT    NOT NULL,
 ///     timestamp             TEXT    NOT NULL,
 ///     prompt_text           TEXT,            -- NULL when store_full_prompt_text = false
 ///     prompt_hash           TEXT    NOT NULL,
@@ -28,6 +29,8 @@ use tokio::sync::mpsc;
 /// ```
 #[derive(Debug, Clone)]
 pub struct RequestRecord {
+    /// Type of event (e.g., "request", "response_blocked").
+    pub event_type: String,
     /// ISO-8601 timestamp of when the request was intercepted.
     pub timestamp: String,
     /// Full prompt text — `None` when `store_full_prompt_text = false`.
@@ -75,6 +78,7 @@ impl Logger {
                     let _ = conn.execute(
                         "CREATE TABLE IF NOT EXISTS requests (
                             id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                            event_type            TEXT    NOT NULL DEFAULT 'request',
                             timestamp             TEXT    NOT NULL,
                             prompt_text           TEXT,
                             prompt_hash           TEXT    NOT NULL,
@@ -111,10 +115,11 @@ impl Logger {
                     
                 if let Err(e) = conn.execute(
                     "INSERT INTO requests (
-                        timestamp, prompt_text, prompt_hash, decision,
+                        event_type, timestamp, prompt_text, prompt_hash, decision,
                         risk_score, trust_score, explanation_json, decoded_payloads_json
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                     params![
+                        record.event_type,
                         record.timestamp,
                         record.prompt_text,
                         record.prompt_hash,

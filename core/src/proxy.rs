@@ -156,6 +156,7 @@ async fn intercept_handler(
             let decoded_payloads_json = serde_json::to_string(&decoded_payloads).unwrap_or_else(|_| "[]".to_string());
             
             let record = RequestRecord {
+                event_type: "request".to_string(),
                 timestamp,
                 prompt_text,
                 prompt_hash,
@@ -216,7 +217,55 @@ async fn intercept_handler(
 
     // Convert reqwest's stream into axum's Body to forward chunks as they arrive
     let stream = upstream_resp.bytes_stream();
-    let body = axum::body::Body::from_stream(stream);
+    let mut analyzer = crate::response_analyzer::ResponseAnalyzer::new(200, state.rules.clone());
+    let logger = state.logger.clone();
+    
+    use futures_util::StreamExt;
+    
+    let modified_stream = async_stream::stream! {
+        let mut stream = stream;
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(bytes) => {
+                    if let Ok(text) = std::str::from_utf8(&bytes) {
+                        let decision = analyzer.analyze_chunk(text);
+                        if decision == Decision::Block {
+                            let notice = "\n\n[Promptify] Stream truncated due to sensitive content detection.";
+                            yield Ok(axum::body::Bytes::from(notice));
+                            
+                            let record = RequestRecord {
+                                event_type: "response_blocked".to_string(),
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                prompt_text: None,
+                                prompt_hash: "RESPONSE_BLOCK".to_string(),
+                                decision: Decision::Block,
+                                risk_score: 100,
+                                trust_score: 100,
+                                explanation: Explanation {
+                                    summary: "Response blocked mid-stream".to_string(),
+                                    reasons: vec!["Sensitive content detected in response".to_string()],
+                                    risk_score: 100,
+                                },
+                                decoded_payloads_json: "[]".to_string(),
+                            };
+                            logger.log_request(record);
+                            
+                            break;
+                        } else {
+                            yield Ok(bytes);
+                        }
+                    } else {
+                        // Not UTF-8, yield as is
+                        yield Ok(bytes);
+                    }
+                }
+                Err(e) => {
+                    yield Err(e);
+                }
+            }
+        }
+    };
 
+    let body = axum::body::Body::from_stream(modified_stream);
     response_builder.body(body).unwrap().into_response()
 }
