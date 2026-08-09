@@ -211,3 +211,12 @@ c:\PROMPTIFY\
 | 1b | ✅ | Cargo workspace (`core` + `cli`); `GET /health` live on both services; config port wiring |
 | 2 | ✅ | Detection logic: RuleEngine, DecoderEngine, ScoringEngine, MlClient, Logger |
 | 3.1 | ✅ | Transparent reverse proxy: stream-forwarding intercepts to upstream ollama |
+| 3.2 | ✅ | Rule Engine integration in proxy |
+| 3.3 | ✅ | Decoder Engine cascade in proxy |
+| 3.4 | ✅ | ML Sidecar entropy analysis in proxy |
+| 3.5 | ✅ | Risk Scoring and Decision blocking in proxy |
+| 3.6 | ✅ | Explainability Engine integration |
+| 3.7 | ✅ | SQLite Logging via MPSC channel |
+| 3.8 | ✅ | Streaming-aware Response Analyzer |
+| 3.9 | ✅ | Prompt Compression |
+| 3.10 | ✅ | Backend adapter pattern (Ollama and OpenAI compatibility) |

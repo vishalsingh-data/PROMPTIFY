@@ -105,23 +105,13 @@ async fn intercept_handler(
 
     let mut warning_header = None;
 
-    if let Ok(mut json_body) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
-        let mut extracted_prompt = String::new();
-        tracing::info!("Parsed JSON body.");
+    let adapter = crate::config::build_adapter(&state.config.backend.backend_type);
+    let mut is_streaming = true; // default to true
 
-        // Attempt to extract standard completions format: {"prompt": "..."}
-        if let Some(p) = json_body.get("prompt").and_then(|v| v.as_str()) {
-            extracted_prompt = p.to_string();
-        } 
-        // Attempt to extract chat completions format: {"messages": [{"content": "..."}]}
-        else if let Some(messages) = json_body.get("messages").and_then(|v| v.as_array()) {
-            for msg in messages {
-                if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
-                    extracted_prompt.push_str(content);
-                    extracted_prompt.push('\n');
-                }
-            }
-        }
+    if let Ok(mut json_body) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+        is_streaming = adapter.is_streaming_response(&json_body);
+        let extracted_prompt = adapter.translate_request(&json_body).unwrap_or_default();
+        tracing::info!("Parsed JSON body via adapter.");
 
         if !extracted_prompt.is_empty() {
             let all_rule_matches = state.rules.check(&extracted_prompt);
@@ -193,14 +183,7 @@ async fn intercept_handler(
                     if state.config.compression.enabled {
                         let compressor = crate::compressor::Compressor::new(state.config.compression.enabled);
                         let compressed = compressor.compress(extracted_prompt);
-                        
-                        if json_body.get("prompt").is_some() {
-                            json_body["prompt"] = serde_json::Value::String(compressed);
-                        } else if let Some(messages) = json_body.get_mut("messages").and_then(|v| v.as_array_mut()) {
-                            if let Some(last) = messages.last_mut() {
-                                last["content"] = serde_json::Value::String(compressed);
-                            }
-                        }
+                        adapter.inject_compressed_prompt(&mut json_body, compressed);
                         
                         // Re-serialize
                         if let Ok(vec) = serde_json::to_vec(&json_body) {
@@ -244,15 +227,23 @@ async fn intercept_handler(
     
     use futures_util::StreamExt;
     
+    let stream_adapter = crate::config::build_adapter(&state.config.backend.backend_type);
     let modified_stream = async_stream::stream! {
         let mut stream = stream;
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
                 Ok(bytes) => {
                     if let Ok(text) = std::str::from_utf8(&bytes) {
-                        let decision = analyzer.analyze_chunk(text);
-                        if decision == Decision::Block {
-                            let notice = "\n\n[Promptify] Stream truncated due to sensitive content detection.";
+                        let mut blocked = false;
+                        if let Some(extracted_text) = stream_adapter.extract_chunk_text(text) {
+                            let decision = analyzer.analyze_chunk(&extracted_text);
+                            if decision == Decision::Block {
+                                blocked = true;
+                            }
+                        }
+                        
+                        if blocked {
+                            let notice = stream_adapter.format_truncation_notice();
                             yield Ok(axum::body::Bytes::from(notice));
                             
                             let record = RequestRecord {

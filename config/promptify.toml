@@ -4,7 +4,7 @@ upstream_url = "http://127.0.0.1:11435"
 
 [backend]
 # Supported values: "ollama", "llamacpp", "generic_openai_compatible"
-type = "ollama"
+type = "generic_openai_compatible"
 
 [thresholds]
 # Risk score at which a request is blocked outright (0–100).
