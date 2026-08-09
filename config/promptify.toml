@@ -19,7 +19,7 @@ store_full_prompt_text = false
 
 [compression]
 # When true, allowed prompts are compressed before forwarding to the upstream LLM.
-enabled = false
+enabled = true
 
 [ml_sidecar]
 # Base URL of the promptify-ml FastAPI sidecar.

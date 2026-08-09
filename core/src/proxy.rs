@@ -88,13 +88,15 @@ async fn intercept_handler(
 
     // Strip Host header so reqwest sets the correct upstream host
     headers.remove(axum::http::header::HOST);
+    // Strip Content-Length because we might have modified the body size (Phase 3.9)
+    headers.remove(axum::http::header::CONTENT_LENGTH);
 
     let path = uri.path();
     let query = uri.query().map(|q| format!("?{}", q)).unwrap_or_default();
     let upstream = format!("{}{}{}", state.config.proxy.upstream_url.trim_end_matches('/'), path, query);
 
     // Read full request body (prompts are small enough to buffer safely)
-    let body_bytes = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+    let mut body_bytes = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
         Ok(b) => b,
         Err(e) => return (axum::http::StatusCode::BAD_REQUEST, format!("Failed to read request body: {}", e)).into_response(),
     };
@@ -103,7 +105,7 @@ async fn intercept_handler(
 
     let mut warning_header = None;
 
-    if let Ok(json_body) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+    if let Ok(mut json_body) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
         let mut extracted_prompt = String::new();
         tracing::info!("Parsed JSON body.");
 
@@ -186,6 +188,26 @@ async fn intercept_handler(
                 }
                 Decision::Allow => {
                     tracing::info!("Allowing request. Score: {}", risk_score);
+                    
+                    // Phase 3.9: Compression
+                    if state.config.compression.enabled {
+                        let compressor = crate::compressor::Compressor::new(state.config.compression.enabled);
+                        let compressed = compressor.compress(extracted_prompt);
+                        
+                        if json_body.get("prompt").is_some() {
+                            json_body["prompt"] = serde_json::Value::String(compressed);
+                        } else if let Some(messages) = json_body.get_mut("messages").and_then(|v| v.as_array_mut()) {
+                            if let Some(last) = messages.last_mut() {
+                                last["content"] = serde_json::Value::String(compressed);
+                            }
+                        }
+                        
+                        // Re-serialize
+                        if let Ok(vec) = serde_json::to_vec(&json_body) {
+                            body_bytes = axum::body::Bytes::from(vec);
+                            tracing::info!("Compressed prompt before forwarding.");
+                        }
+                    }
                 }
             }
         }
