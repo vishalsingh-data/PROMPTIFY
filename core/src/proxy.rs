@@ -126,7 +126,7 @@ async fn intercept_handler(
 
             // Phase 3.3: Recursive Decoder cascade
             let decoded_payloads = state.decoder.decode(&extracted_prompt);
-            for payload in decoded_payloads {
+            for payload in &decoded_payloads {
                 let mut decoded_matches = state.rules.check(&payload.plaintext);
                 if !decoded_matches.is_empty() {
                     // Boost severity for being hidden in an encoding
@@ -136,6 +136,13 @@ async fn intercept_handler(
                     tracing::info!("Rule matches found in DECODED payload (scheme: {:?}, depth: {}): {:?}", payload.scheme, payload.depth, decoded_matches);
                     all_rule_matches.append(&mut decoded_matches);
                 }
+            }
+
+            // Phase 3.4: ML Sidecar Entropy Analysis
+            let decoded_plaintext: Vec<&str> = decoded_payloads.iter().map(|p| p.plaintext.as_str()).collect();
+            match state.ml.analyze(&extracted_prompt, decoded_plaintext).await {
+                Ok(ml_signal) => tracing::info!("ML Sidecar signal: {:?}", ml_signal),
+                Err(e) => tracing::warn!("ML Sidecar analysis failed: {}", e),
             }
         }
     }

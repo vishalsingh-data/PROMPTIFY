@@ -13,23 +13,26 @@ use std::time::Duration;
 /// Signal returned by the ML sidecar for a single prompt.
 #[derive(Debug, Clone)]
 pub struct MlSignal {
-    /// Shannon entropy of the prompt (0.0 – ~8.0 for character distributions).
-    pub entropy: f64,
-    /// `true` when entropy exceeds the sidecar's internal threshold.
-    pub flagged: bool,
+    pub prompt_entropy: f64,
+    pub payload_entropies: Vec<f64>,
+    pub high_entropy_flag: bool,
+    pub classifier_verdict: String,
 }
 
 /// Request body sent to `POST /analyze`.
 #[derive(Debug, Serialize)]
 struct AnalyzeRequest<'a> {
-    text: &'a str,
+    prompt: &'a str,
+    decoded_payloads: Vec<&'a str>,
 }
 
 /// Response body received from `POST /analyze`.
 #[derive(Debug, Deserialize)]
 struct AnalyzeResponse {
-    entropy: f64,
-    flagged: bool,
+    prompt_entropy: f64,
+    payload_entropies: Vec<f64>,
+    high_entropy_flag: bool,
+    classifier_verdict: String,
 }
 
 /// HTTP client for the `promptify-ml` FastAPI sidecar.
@@ -58,14 +61,10 @@ impl MlClient {
     }
 
     /// Send `prompt` to `POST /analyze` and return the resulting `MlSignal`.
-    ///
-    /// If the sidecar is unreachable or times out, returns an error. The caller
-    /// (`proxy.rs`) is responsible for deciding how to handle a sidecar failure
-    /// (degrade gracefully vs. block by default).
-    pub async fn analyze(&self, prompt: &str) -> Result<MlSignal, Box<dyn std::error::Error>> {
+    pub async fn analyze(&self, prompt: &str, decoded_payloads: Vec<&str>) -> Result<MlSignal, Box<dyn std::error::Error>> {
         let url = format!("{}/analyze", self.base_url.trim_end_matches('/'));
         
-        let req = AnalyzeRequest { text: prompt };
+        let req = AnalyzeRequest { prompt, decoded_payloads };
         
         let resp = self.client.post(&url)
             .json(&req)
@@ -75,8 +74,10 @@ impl MlClient {
         let data: AnalyzeResponse = resp.json().await?;
         
         Ok(MlSignal {
-            entropy: data.entropy,
-            flagged: data.flagged,
+            prompt_entropy: data.prompt_entropy,
+            payload_entropies: data.payload_entropies,
+            high_entropy_flag: data.high_entropy_flag,
+            classifier_verdict: data.classifier_verdict,
         })
     }
 }
