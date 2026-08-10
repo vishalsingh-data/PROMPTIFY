@@ -3,3 +3,11 @@ name = "promptify-cli"
 version = "0.1.0"
 edition = "2021"
 description = "Promptify CLI — status checks, log inspection, config validation"
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"] }
+tokio = { version = "1.34", features = ["full", "signal"] }
+reqwest = { version = "0.11", features = ["json"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

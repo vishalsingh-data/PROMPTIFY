@@ -48,6 +48,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health_handler))
         .route("/api/generate", post(intercept_handler))
         .route("/v1/chat/completions", post(intercept_handler))
+        .route("/api/replay", post(replay_handler))
         .with_state(state)
 }
 
@@ -281,4 +282,48 @@ async fn intercept_handler(
 
     let body = axum::body::Body::from_stream(modified_stream);
     response_builder.body(body).unwrap().into_response()
+}
+
+async fn replay_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let prompt = payload.get("prompt").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+
+    if prompt.is_empty() {
+        return (axum::http::StatusCode::BAD_REQUEST, "Missing prompt field").into_response();
+    }
+
+    let all_rule_matches = state.rules.check(&prompt);
+    let decoded_payloads = state.decoder.decode(&prompt);
+    
+    let mut all_decoded_matches = Vec::new();
+    for payload in &decoded_payloads {
+        let mut decoded_matches = state.rules.check(&payload.plaintext);
+        all_decoded_matches.append(&mut decoded_matches);
+    }
+
+    let decoded_plaintext: Vec<&str> = decoded_payloads.iter().map(|p| p.plaintext.as_str()).collect();
+    let ml_result = state.ml.analyze(&prompt, decoded_plaintext).await;
+    let ml_signal = ml_result.as_ref().ok();
+
+    let (risk_score, decision, _) = state.scoring.score(&all_rule_matches, &all_decoded_matches, ml_signal);
+
+    let combined_rules = [all_rule_matches.clone(), all_decoded_matches.clone()].concat();
+
+    let synthetic = json!({
+        "prompt": prompt,
+        "decoded_payloads": decoded_payloads,
+        "rule_matches": combined_rules,
+        "ml_signal": ml_signal,
+        "risk_score": risk_score,
+        "decision": match decision {
+            crate::decision::Decision::Allow => "Allow",
+            crate::decision::Decision::Warn => "Warn",
+            crate::decision::Decision::Block => "Block",
+        }
+    });
+
+    (axum::http::StatusCode::OK, Json(synthetic)).into_response()
 }

@@ -1,5 +1,5 @@
 [proxy]
-listen_port = 11434
+listen_port = 11433
 upstream_url = "http://127.0.0.1:11435"
 
 [backend]
@@ -15,7 +15,7 @@ warn_at = 30
 [logging]
 # When true, the full prompt text is stored in SQLite alongside the hash.
 # Set to false to store only the hash for privacy.
-store_full_prompt_text = false
+store_full_prompt_text = true
 
 [compression]
 # When true, allowed prompts are compressed before forwarding to the upstream LLM.

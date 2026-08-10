@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Signal returned by the ML sidecar for a single prompt.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct MlSignal {
     pub prompt_entropy: f64,
     pub payload_entropies: Vec<f64>,

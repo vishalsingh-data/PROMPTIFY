@@ -24,7 +24,7 @@ pub const WEIGHT_ROLE_MANIPULATION: u8 = 25;
 // ── Public types ───────────────────────────────────────────────────────────────
 
 /// The rule category a match belongs to.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum RuleCategory {
     OverridePhrase,
     SensitiveKeyword,
@@ -32,7 +32,7 @@ pub enum RuleCategory {
 }
 
 /// A single rule hit returned by `RuleEngine::check`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct RuleMatch {
     /// The category that produced this match.
     pub category: RuleCategory,
