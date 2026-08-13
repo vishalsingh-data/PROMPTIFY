@@ -44,11 +44,23 @@ pub struct AppState {
 /// - `POST /api/generate`            — ollama-compatible intercept (Phase 2)
 /// - `POST /v1/chat/completions`     — OpenAI-compatible intercept (Phase 2)
 pub fn router(state: AppState) -> Router {
+    use tower_http::cors::{CorsLayer, AllowOrigin};
+    use axum::http::HeaderValue;
+
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin: &HeaderValue, _request_parts| {
+            origin.as_bytes().starts_with(b"chrome-extension://")
+        }))
+        .allow_methods(axum::http::Method::POST)
+        .allow_headers(tower_http::cors::Any);
+
     Router::new()
         .route("/health", get(health_handler))
         .route("/api/generate", post(intercept_handler))
         .route("/v1/chat/completions", post(intercept_handler))
         .route("/api/replay", post(replay_handler))
+        .route("/extension/analyze", post(extension_analyze_handler))
+        .layer(cors)
         .with_state(state)
 }
 
@@ -323,6 +335,58 @@ async fn replay_handler(
             crate::decision::Decision::Warn => "Warn",
             crate::decision::Decision::Block => "Block",
         }
+    });
+
+    (axum::http::StatusCode::OK, Json(synthetic)).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct ExtensionAnalyzeRequest {
+    pub prompt: String,
+    pub source_url: String,
+}
+
+async fn extension_analyze_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<ExtensionAnalyzeRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let prompt = payload.prompt;
+    
+    if prompt.is_empty() {
+        return (axum::http::StatusCode::BAD_REQUEST, "Missing prompt field").into_response();
+    }
+
+    let all_rule_matches = state.rules.check(&prompt);
+    let decoded_payloads = state.decoder.decode(&prompt);
+    
+    let mut all_decoded_matches = Vec::new();
+    for payload in &decoded_payloads {
+        let mut decoded_matches = state.rules.check(&payload.plaintext);
+        all_decoded_matches.append(&mut decoded_matches);
+    }
+
+    let decoded_plaintext: Vec<&str> = decoded_payloads.iter().map(|p| p.plaintext.as_str()).collect();
+    let ml_result = state.ml.analyze(&prompt, decoded_plaintext).await;
+    let ml_signal = ml_result.as_ref().ok();
+
+    let (risk_score, decision, signals) = state.scoring.score(&all_rule_matches, &all_decoded_matches, ml_signal);
+    
+    // We construct the unified Signal object for build_explanation
+    let explanation = crate::explain::build_explanation(&signals, &decision, risk_score);
+
+    // Trust score is just 100 - risk_score
+    let trust_score = 100u8.saturating_sub(risk_score as u8);
+
+    let synthetic = json!({
+        "decision": match decision {
+            crate::decision::Decision::Allow => "Allow",
+            crate::decision::Decision::Warn => "Warn",
+            crate::decision::Decision::Block => "Block",
+        },
+        "risk_score": risk_score,
+        "trust_score": trust_score,
+        "explanation": explanation,
     });
 
     (axum::http::StatusCode::OK, Json(synthetic)).into_response()
