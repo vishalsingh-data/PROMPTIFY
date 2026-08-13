@@ -1,9 +1,9 @@
 /**
- * PROMPTIFY CONTENT SCRIPT (Generic UI Interceptor with Inline UI)
+ * PROMPTIFY CONTENT SCRIPT (Generic UI Interceptor with Modal Popup)
  * 
  * This script listens for Enter keypresses globally on any text input element.
- * It injects a Shadow DOM element to display warnings or blocks directly above
- * the text input box without relying on native browser alerts.
+ * It uses a centered, fixed-position Shadow DOM modal to display warnings 
+ * or blocks. This ensures we don't break the host site's DOM (like ProseMirror).
  */
 
 console.log("[Promptify] Generic UI Interceptor loaded on", window.location.hostname);
@@ -54,13 +54,12 @@ document.body.addEventListener("keydown", async (event) => {
         });
 
         target.style.opacity = originalOpacity;
+        console.log("[Promptify] Background response:", response);
 
         if (response && response.success) {
           const data = response.data;
           
           if (data.decision === "Block") {
-            injectBlockPanel(target, data, promptText);
-            
             // Clear the malicious prompt from the box initially
             if (isTextArea || isTextInput) {
               target.value = "";
@@ -69,9 +68,11 @@ document.body.addEventListener("keydown", async (event) => {
             }
             target.dispatchEvent(new Event('input', { bubbles: true }));
             
+            showModalPanel(target, data, promptText, "Block");
+            
           } else if (data.decision === "Warn") {
-            injectWarnBanner(target, data);
-            submitOriginalEvent(target);
+            // Warn still interrupts the flow to ask for permission
+            showModalPanel(target, data, promptText, "Warn");
           } else {
             submitOriginalEvent(target);
           }
@@ -107,149 +108,131 @@ function submitOriginalEvent(target) {
 }
 
 // ==========================================
-// INLINE UI INJECTION LOGIC
+// CENTERED MODAL UI INJECTION
 // ==========================================
 
-function createShadowContainer(target) {
-  // Find a stable parent to attach our UI to
-  const parent = target.parentElement;
-  
-  // Create a host element for the Shadow DOM
+function showModalPanel(target, data, originalPrompt, type) {
+  // Create a host element for the Shadow DOM appended to body
   const host = document.createElement('div');
-  host.style.position = 'absolute';
-  host.style.zIndex = '999999';
-  host.style.width = '100%';
-  host.style.pointerEvents = 'none'; // let clicks pass through the host itself
-  
-  // Position it relatively above the input target
-  // We insert it right before the target
-  parent.style.position = parent.style.position || 'relative';
-  parent.insertBefore(host, target);
+  document.body.appendChild(host);
   
   const shadowRoot = host.attachShadow({ mode: 'open' });
-  return { host, shadowRoot };
-}
-
-function injectWarnBanner(target, data) {
-  const { host, shadowRoot } = createShadowContainer(target);
-  host.style.bottom = '100%'; // position above the input box
-  host.style.marginBottom = '10px';
-
-  shadowRoot.innerHTML = `
-    <style>
-      .promptify-warn {
-        background-color: #ff9800;
-        color: #fff;
-        padding: 8px 12px;
-        border-radius: 6px;
-        font-family: sans-serif;
-        font-size: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        pointer-events: auto;
-        display: inline-block;
-        animation: fadeOut 3s forwards;
-        animation-delay: 4s;
-      }
-      @keyframes fadeOut {
-        to { opacity: 0; visibility: hidden; }
-      }
-    </style>
-    <div class="promptify-warn">
-      ⚠️ <b>Warning (Score: ${data.risk_score}):</b> ${data.explanation.summary}
-    </div>
-  `;
-
-  // Auto-remove the host after animation completes
-  setTimeout(() => host.remove(), 7500);
-}
-
-function injectBlockPanel(target, data, originalPrompt) {
-  // Remove any existing block panels for this target
-  if (target._promptifyBlockHost) {
-    target._promptifyBlockHost.remove();
-  }
-
-  const { host, shadowRoot } = createShadowContainer(target);
-  host.style.bottom = '100%';
-  host.style.marginBottom = '10px';
-  host.style.pointerEvents = 'auto'; // Block panels need interaction
   
-  target._promptifyBlockHost = host;
+  const isBlock = type === "Block";
+  const titleText = isBlock ? "🛡️ Firewall Blocked Request" : "⚠️ Firewall Warning";
+  const colorPrimary = isBlock ? "#f44336" : "#ff9800";
+  const colorSecondary = isBlock ? "#d32f2f" : "#f57c00";
 
   shadowRoot.innerHTML = `
     <style>
-      .promptify-block {
-        background-color: #f44336;
-        color: #fff;
-        padding: 16px;
-        border-radius: 8px;
+      .overlay {
+        position: fixed;
+        top: 0; left: 0; width: 100vw; height: 100vh;
+        background: rgba(0,0,0,0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2147483647; /* max z-index */
+        backdrop-filter: blur(4px);
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        font-size: 14px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        max-width: 400px;
-        border: 1px solid #d32f2f;
       }
-      .promptify-block h3 {
-        margin: 0 0 8px 0;
+      .modal {
+        background: #1e1e2e;
+        color: #fff;
+        width: 400px;
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,0.1);
+        animation: scaleIn 0.2s ease-out;
+      }
+      @keyframes scaleIn {
+        from { transform: scale(0.95); opacity: 0; }
+        to { transform: scale(1); opacity: 1; }
+      }
+      .header {
+        background: ${colorPrimary};
+        padding: 16px 20px;
+        font-weight: bold;
         font-size: 16px;
         display: flex;
         align-items: center;
-        gap: 6px;
+        border-bottom: 2px solid ${colorSecondary};
       }
-      .promptify-block p {
-        margin: 0 0 12px 0;
-        line-height: 1.4;
+      .body {
+        padding: 20px;
       }
-      .promptify-reasons {
-        background: rgba(0,0,0,0.1);
-        padding: 8px;
+      .summary {
+        font-size: 15px;
+        margin-bottom: 16px;
+        line-height: 1.5;
+      }
+      .score {
+        display: inline-block;
+        background: rgba(255,255,255,0.1);
+        padding: 4px 8px;
         border-radius: 4px;
-        margin-bottom: 12px;
         font-size: 12px;
+        margin-bottom: 16px;
+        font-weight: bold;
       }
-      .promptify-btn-group {
+      .reasons {
+        background: rgba(0,0,0,0.2);
+        padding: 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        color: #ccc;
+        margin-bottom: 20px;
+      }
+      .reasons div { margin-bottom: 6px; }
+      .reasons div:last-child { margin-bottom: 0; }
+      .footer {
         display: flex;
-        gap: 8px;
+        gap: 12px;
         justify-content: flex-end;
       }
       button {
         border: none;
-        padding: 8px 12px;
-        border-radius: 4px;
+        padding: 10px 16px;
+        border-radius: 6px;
         cursor: pointer;
         font-weight: bold;
-        transition: background 0.2s;
+        font-size: 14px;
+        transition: all 0.2s;
       }
       .btn-cancel {
-        background: #fff;
-        color: #f44336;
-      }
-      .btn-cancel:hover {
-        background: #f1f1f1;
-      }
-      .btn-override {
         background: transparent;
         color: #fff;
-        border: 1px solid rgba(255,255,255,0.5);
+        border: 1px solid rgba(255,255,255,0.2);
       }
-      .btn-override:hover {
+      .btn-cancel:hover {
         background: rgba(255,255,255,0.1);
       }
-      .btn-override.confirming {
-        background: #ff9800;
-        border-color: #ff9800;
+      .btn-override {
+        background: ${colorPrimary};
         color: #fff;
       }
+      .btn-override:hover {
+        background: ${colorSecondary};
+      }
+      .btn-override.confirming {
+        background: #e91e63;
+      }
     </style>
-    <div class="promptify-block">
-      <h3>🛡️ Promptify Firewall Blocked Request</h3>
-      <p><b>Score: ${data.risk_score}</b> - ${data.explanation.summary}</p>
-      <div class="promptify-reasons">
-        ${data.explanation.reasons.map(r => `<div>• ${r}</div>`).join('')}
-      </div>
-      <div class="promptify-btn-group">
-        <button class="btn-cancel" id="btn-cancel">Discard Prompt</button>
-        <button class="btn-override" id="btn-override">Submit Anyway</button>
+    <div class="overlay">
+      <div class="modal">
+        <div class="header">${titleText}</div>
+        <div class="body">
+          <div class="score">Risk Score: ${data.risk_score}</div>
+          <div class="summary">${data.explanation.summary}</div>
+          <div class="reasons">
+            ${data.explanation.reasons.map(r => `<div>• ${r}</div>`).join('')}
+          </div>
+          <div class="footer">
+            <button class="btn-cancel" id="btn-cancel">${isBlock ? "Discard Prompt" : "Cancel"}</button>
+            <button class="btn-override" id="btn-override">Submit Anyway</button>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -259,7 +242,6 @@ function injectBlockPanel(target, data, originalPrompt) {
 
   btnCancel.addEventListener('click', () => {
     host.remove();
-    target._promptifyBlockHost = null;
   });
 
   let overrideConfirmState = false;
@@ -268,22 +250,23 @@ function injectBlockPanel(target, data, originalPrompt) {
     if (!overrideConfirmState) {
       // First click: ask for confirmation
       overrideConfirmState = true;
-      btnOverride.textContent = "Are you sure? Click again.";
+      btnOverride.textContent = "Click to Confirm";
       btnOverride.classList.add('confirming');
     } else {
       // Second click: override and submit
       host.remove();
-      target._promptifyBlockHost = null;
       
-      // Restore the original text to the box
-      const isTextArea = target.tagName === "TEXTAREA";
-      const isTextInput = target.tagName === "INPUT" && target.type === "text";
-      if (isTextArea || isTextInput) {
-        target.value = originalPrompt;
-      } else {
-        target.innerText = originalPrompt;
+      // Restore the original text to the box if it was cleared
+      if (isBlock) {
+        const isTextArea = target.tagName === "TEXTAREA";
+        const isTextInput = target.tagName === "INPUT" && target.type === "text";
+        if (isTextArea || isTextInput) {
+          target.value = originalPrompt;
+        } else {
+          target.innerText = originalPrompt;
+        }
+        target.dispatchEvent(new Event('input', { bubbles: true }));
       }
-      target.dispatchEvent(new Event('input', { bubbles: true }));
 
       // Wait a tiny bit for JS frameworks to catch up with the text restoration
       setTimeout(() => {
