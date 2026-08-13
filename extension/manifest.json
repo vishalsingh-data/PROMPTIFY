@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Promptify Firewall",
+  "version": "0.1.0",
+  "description": "Local-first AI firewall protecting against prompt injection and data exfiltration.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:11433/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Promptify"
+  }
+}
