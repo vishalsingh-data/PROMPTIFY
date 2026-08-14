@@ -344,6 +344,7 @@ async fn replay_handler(
 pub struct ExtensionAnalyzeRequest {
     pub prompt: String,
     pub source_url: String,
+    pub event_type: Option<String>,
 }
 
 async fn extension_analyze_handler(
@@ -377,6 +378,33 @@ async fn extension_analyze_handler(
 
     // Trust score is just 100 - risk_score
     let trust_score = 100u8.saturating_sub(risk_score as u8);
+
+    // LOGGING
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(prompt.as_bytes());
+    let prompt_hash = hex::encode(hasher.finalize());
+    let prompt_text = if state.config.logging.store_full_prompt_text {
+        Some(prompt.clone())
+    } else {
+        None
+    };
+    let decoded_payloads_json = serde_json::to_string(&decoded_payloads).unwrap_or_else(|_| "[]".to_string());
+    
+    let event_type = payload.event_type.unwrap_or_else(|| "extension_outgoing".to_string());
+
+    let record = crate::logging::RequestRecord {
+        event_type,
+        timestamp,
+        prompt_text,
+        prompt_hash,
+        decision: decision.clone(),
+        risk_score,
+        trust_score,
+        explanation: explanation.clone(),
+        decoded_payloads_json,
+    };
+    state.logger.log_request(record);
 
     let synthetic = json!({
         "decision": match decision {

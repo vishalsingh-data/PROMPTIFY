@@ -20,7 +20,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       },
       body: JSON.stringify({
         prompt: request.prompt,
-        source_url: request.source_url
+        source_url: request.source_url,
+        event_type: request.event_type || "extension_outgoing"
       })
     })
       .then((response) => {

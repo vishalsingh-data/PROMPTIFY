@@ -109,7 +109,7 @@ async function handlePromptSubmission(originalEvent, inputTarget, successCallbac
   try {
     const response = await new Promise((resolve) => {
       chrome.runtime.sendMessage(
-        { type: "ANALYZE_PROMPT", prompt: promptText, source_url: window.location.href },
+        { type: "ANALYZE_PROMPT", prompt: promptText, source_url: window.location.href, event_type: "outgoing" },
         resolve
       );
     });
@@ -306,7 +306,7 @@ async function finishResponseGeneration() {
   try {
     const res = await new Promise((resolve) => {
       chrome.runtime.sendMessage(
-        { type: "ANALYZE_PROMPT", prompt: responseText, source_url: window.location.href },
+        { type: "ANALYZE_PROMPT", prompt: responseText, source_url: window.location.href, event_type: "incoming" },
         resolve
       );
     });
