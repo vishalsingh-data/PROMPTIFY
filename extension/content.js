@@ -271,7 +271,7 @@ const observer = new MutationObserver((mutations) => {
       }
       
       // Specifically target likely LLM output containers (avoiding generic "div" to prevent capturing the whole page)
-      const likelyContainer = target.closest('article, [data-message-author-role="assistant"], .markdown, .prose');
+      const likelyContainer = target.closest('[data-message-author-role="assistant"], .markdown');
       if (likelyContainer) {
         activelyMutatingElement = likelyContainer;
       } else {
@@ -296,7 +296,7 @@ async function finishResponseGeneration() {
   isAwaitingResponse = false; // Reset flag so we don't double-analyze
   
   // Walk up a bit to get the full message container if we're only tracking a paragraph
-  let responseContainer = activelyMutatingElement.closest('article, [data-message-author-role="assistant"], div.markdown, .prose') || activelyMutatingElement;
+  let responseContainer = activelyMutatingElement.closest('[data-message-author-role="assistant"], .markdown') || activelyMutatingElement;
   
   const responseText = responseContainer.innerText || responseContainer.textContent;
   
