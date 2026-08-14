@@ -1,222 +1,64 @@
-# Promptify — Architecture
+# Promptify Architecture
 
-> **Living document.** Updated at the end of every phase.
-> Current state: **Phase 1 — Scaffold** (stubs only, no detection logic).
+Promptify is a local-first AI firewall designed to intercept prompts and responses
+between a client and an upstream LLM server. It detects prompt injection, data
+exfiltration, and encoded payload attacks using a combination of static rules
+and ML-based entropy analysis.
 
----
+## High-Level Architecture
 
-## System Overview
+The system consists of two primary processes:
 
-Two processes, communicating over localhost HTTP:
+1. **Promptify Core (Rust)**: A high-performance reverse proxy that sits between
+   the client and the upstream LLM server (e.g., Ollama, llama.cpp, or OpenAI).
+   It handles all traffic interception, rule evaluation, decoding, and scoring.
+2. **ML Sidecar (Python)**: An auxiliary service that provides ML-based detection
+   capabilities (e.g., entropy analysis) that are too complex or slow to implement
+   in pure Rust. The core communicates with the sidecar via HTTP or gRPC.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Client                               │
-│  (any LLM client configured to talk to localhost:11434)     │
-└────────────────────────┬────────────────────────────────────┘
-                         │ HTTP (thinks it's talking to ollama)
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  promptify-core  (Rust)                     │
-│  axum server bound to :11434                                │
-│                                                             │
-│  proxy.rs ──► RuleEngine        [rules/mod.rs]              │
-│           ──► DecoderEngine     [decoder.rs]                │
-│           ──► MlClient          [ml_client.rs]              │
-│           ──► ScoringEngine     [scoring.rs]                │
-│           ──► Decision/Explain  [decision.rs / explain.rs]  │
-│           ──► Logger            [logging.rs]  (async)       │
-│           ──► Compressor        [compressor.rs] (if Allow)  │
-│           ──► ResponseAnalyzer  [response_analyzer.rs]      │
-└────────────────────────┬──────────────────────┬────────────┘
-                         │ POST /analyze         │ forward (Allow)
-                         ▼                       ▼
-         ┌───────────────────────┐   ┌──────────────────────┐
-         │  promptify-ml (Python)│   │  Upstream LLM        │
-         │  FastAPI :8500        │   │  ollama / llama.cpp  │
-         │  entropy.py           │   │  :11435              │
-         │  classifier.py (stub) │   └──────────────────────┘
-         └───────────────────────┘
-```
+### Data Flow (System Proxy)
 
-**Rule of thumb**: Rust owns plumbing and decisions. Python owns intelligence.
+1. **Ingress**: The client sends a request to the proxy.
+2. **Analysis Pipeline**:
+   - `proxy::intercept_handler` extracts the prompt from the request body.
+   - The request is passed to the `RuleEngine` for static analysis.
+   - The request is passed to the `DecoderEngine` to detect obfuscation.
+   - The request is passed to the `ML Sidecar` for entropy and ML analysis.
+   - The results from all engines are aggregated by the `ScoringEngine`.
+3. **Decision**: The `ScoringEngine` outputs a `Decision` (Allow, Warn, Block).
+4. **Action**:
+   - If `Allow` or `Warn` (and user overrides), the proxy forwards the request to the upstream LLM.
+   - If `Block`, the proxy returns an immediate HTTP error response detailing the `Explanation`.
 
----
+### Data Flow (Browser Extension)
 
-## Request Lifecycle
+To protect non-technical users directly in web UIs (ChatGPT, Claude, Gemini) without requiring a system-wide proxy or root CA installation, Promptify includes a Manifest V3 browser extension.
 
-```
-1.  Client sends prompt to promptify-core (:11434)
-2.  proxy.rs receives request
-3.  RuleEngine.check(prompt)           → Vec<RuleMatch>
-4.  DecoderEngine.decode(prompt)       → Vec<DecodedPayload>
-        └─ re-check decoded text via RuleEngine
-5.  MlClient.analyze(prompt)           → MlSignal  {entropy, flagged}
-6.  ScoringEngine.score(all signals)   → (u8 risk_score, Decision)
-7.  build_explanation(signals)         → Explanation
-8.  Logger.log_request(record)         (spawned async — never blocks response)
-9a. Decision::Allow  → Compressor (if enabled) → forward to upstream LLM
-                     → ResponseAnalyzer on streamed chunks → client
-9b. Decision::Warn   → forward + attach warning annotation to response
-9c. Decision::Block  → return synthetic refusal; upstream LLM never contacted
-```
+1. **Generic UI Interception**: `content.js` listens globally for `Enter` keystrokes and generic submit button clicks. If triggered inside a text input or `contenteditable` element, it extracts the prompt and pauses the submission locally.
+2. **Side-channel Analysis**: The prompt is sent to `background.js`, which fires an out-of-band `POST /extension/analyze` request directly to `promptify-core` running on localhost.
+3. **Pipeline Reuse**: `promptify-core` routes this request through the exact same `RuleEngine`, `DecoderEngine`, and `ScoringEngine` pipeline, but does *not* forward it to an upstream LLM. It simply returns the `Decision` and `Explanation`.
+4. **Client-side Enforcement**: The extension reads the decision.
+   - If `Allow`: It silently synthesizes an `Enter` keypress or click to let the website's native code submit the prompt.
+   - If `Warn`: It injects a sleek banner above the input, but still submits the prompt.
+   - If `Block`: It clears the input box and injects a robust Shadow DOM modal overlay explaining the block reasons, giving the user an option to manually discard or override the block.
 
----
+## Directory Structure
 
-## Module Boundary Table
-
-| File | Type | Owns | Does NOT own |
-|------|------|------|--------------|
-| `main.rs` | binary entry | startup, config load, server bind | any business logic |
-| `proxy.rs` | orchestration | Axum router, pipeline sequencing | detection logic |
-| `config.rs` | config | deserialise `promptify.toml` → `Config` | runtime mutation |
-| `decision.rs` | types | `Decision` enum, `Explanation` struct | logic that computes them |
-| `explain.rs` | builder | assemble `Explanation` from signals | scoring, routing |
-| `rules/mod.rs` | engine | load `ruleset.json`, `RuleEngine::check` | decoding, scoring |
-| `decoder.rs` | engine | `DecoderEngine`: detect & decode encoded payloads | rule evaluation on decoded text |
-| `ml_client.rs` | HTTP client | `POST /analyze` to sidecar | entropy math, scoring |
-| `scoring.rs` | engine | `ScoringEngine`: merge signals → risk score + Decision | individual signal production |
-| `logging.rs` | persistence | SQLite schema + async INSERT | any business logic |
-| `response_analyzer.rs` | analyzer | rolling-window response inspection | scoring, logging |
-| `compressor.rs` | transformer | optional prompt compression (Allow path only) | detection |
-| `ml-sidecar/main.py` | HTTP wiring | FastAPI app, route `/analyze` | entropy math, ML |
-| `ml-sidecar/entropy.py` | math | Shannon entropy computation | HTTP, routing, scoring |
-| `ml-sidecar/classifier.py` | ML stub | future classifier (Phase 3) | entropy, routing |
-
----
-
-## Canonical Vocabulary
-
-These names are fixed across all phases. Do not invent synonyms.
-
-| Name | Kind | Location |
-|------|------|----------|
-| `RuleEngine` | struct | `rules/mod.rs` |
-| `DecoderEngine` | struct | `decoder.rs` |
-| `ScoringEngine` | struct | `scoring.rs` |
-| `Decision` | enum | `decision.rs` |
-| `Explanation` | struct | `decision.rs` |
-| `BackendAdapter` | (Phase 2+) | `proxy.rs` area |
-| `MlClient` | struct | `ml_client.rs` |
-| `Logger` | struct | `logging.rs` |
-| `ResponseAnalyzer` | struct | `response_analyzer.rs` |
-| `Compressor` | struct | `compressor.rs` |
-
----
-
-## Data Schemas
-
-### `config/promptify.toml` (owned by `config.rs`)
-
-```toml
-[proxy]
-listen_port = 11434
-upstream_url = "http://127.0.0.1:11435"
-
-[backend]
-type = "ollama"   # "ollama" | "llamacpp" | "generic_openai_compatible"
-
-[thresholds]
-block_at = 70
-warn_at  = 30
-
-[logging]
-store_full_prompt_text = true
-
-[compression]
-enabled = false
-
-[ml_sidecar]
-url        = "http://127.0.0.1:8500"
-timeout_ms = 500
-```
-
-### SQLite `requests` table (owned by `logging.rs`)
-
-```sql
-CREATE TABLE requests (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp             TEXT    NOT NULL,
-    prompt_text           TEXT,            -- NULL when store_full_prompt_text = false
-    prompt_hash           TEXT    NOT NULL,
-    decision              TEXT    NOT NULL,
-    risk_score            INTEGER NOT NULL,
-    trust_score           INTEGER NOT NULL,
-    explanation_json      TEXT    NOT NULL,
-    decoded_payloads_json TEXT    NOT NULL
-);
-```
-
-### `rules/ruleset.json` (owned by `rules/mod.rs`)
-
-```json
-{
-  "override_phrases":          [...],   // weight 40
-  "sensitive_keywords":        [...],   // weight 35
-  "role_manipulation_patterns":[...]    // weight 25
-}
-```
-
----
-
-## Repo Layout
-
-```
-c:\PROMPTIFY\
-├── Cargo.toml               # Cargo workspace (members: core, cli)
-├── core/                    # Rust crate — proxy + detection pipeline
-│   ├── Cargo.toml
-│   └── src/
-│       ├── main.rs          # startup wiring; reads port from config
-│       ├── proxy.rs         # router: GET /health ✅  POST /api/generate (stub)
-│       ├── config.rs
-│       ├── decision.rs
-│       ├── explain.rs
-│       ├── decoder.rs
-│       ├── ml_client.rs
-│       ├── scoring.rs
-│       ├── logging.rs
-│       ├── response_analyzer.rs
-│       ├── compressor.rs
-│       └── rules/
-│           ├── mod.rs
-│           └── ruleset.json
-├── ml-sidecar/              # Python FastAPI — entropy + future ML
-│   ├── main.py              # GET /health ✅  POST /analyze (stub)
-│   ├── entropy.py
-│   ├── classifier.py
-│   └── requirements.txt
-├── cli/                     # Rust CLI binary (placeholder)
-│   ├── Cargo.toml
-│   └── src/main.rs
-├── extension/               # Phase 4 — browser extension
-├── proxy-ca/                # Phase 5 — HTTPS MITM CA
-├── config/
-│   └── promptify.toml
-├── data/                    # GITIGNORED — runtime SQLite
-├── ARCHITECTURE.md          # this file
-├── AGENTS.md
-├── CLAUDE.md
-└── README.md
-```
-
----
-
-## Phase History
-
-| Phase | Status | What was built |
-|-------|--------|----------------|
-| 0 | ✅ | Repo cleared, AGENTS.md / CLAUDE.md committed |
-| 1 | ✅ | Full scaffold: directory tree, stub modules with doc comments, config/rule schemas, ARCHITECTURE.md |
-| 1b | ✅ | Cargo workspace (`core` + `cli`); `GET /health` live on both services; config port wiring |
-| 2 | ✅ | Detection logic: RuleEngine, DecoderEngine, ScoringEngine, MlClient, Logger |
-| 3.1 | ✅ | Transparent reverse proxy: stream-forwarding intercepts to upstream ollama |
-| 3.2 | ✅ | Rule Engine integration in proxy |
-| 3.3 | ✅ | Decoder Engine cascade in proxy |
-| 3.4 | ✅ | ML Sidecar entropy analysis in proxy |
-| 3.5 | ✅ | Risk Scoring and Decision blocking in proxy |
-| 3.6 | ✅ | Explainability Engine integration |
-| 3.7 | ✅ | SQLite Logging via MPSC channel |
-| 3.8 | ✅ | Streaming-aware Response Analyzer |
-| 3.9 | ✅ | Prompt Compression |
-| 3.10 | ✅ | Backend adapter pattern (Ollama and OpenAI compatibility) |
+- `cli/`: Command-line interface for starting and managing Promptify.
+  - `src/main.rs`: CLI entrypoint (clap parser, orchestration).
+- `core/`: The main Rust detection engine and proxy.
+  - `src/main.rs`: Core entrypoint (starts the axum server).
+  - `src/proxy.rs`: Request routing, proxy logic, and side-channel endpoints.
+  - `src/rules/`: Static rule definitions and regex matching.
+  - `src/decoder.rs`: Base64/Hex decoding and recursive payload detection.
+  - `src/scoring.rs`: Logic for aggregating signals into a final score.
+  - `src/decision.rs`: Typed definition of the `Decision` enum.
+  - `src/explain.rs`: Generates human-readable rationales for decisions.
+- `ml-sidecar/`: Python FastApi service.
+  - `main.py`: Sidecar entrypoint.
+  - `analyzer.py`: ML models (entropy calculation, future transformers).
+- `extension/`: Chrome Manifest V3 browser extension.
+  - `manifest.json`: Configuration and permissions.
+  - `content.js`: The Generic UI interceptor and Shadow DOM UI renderer.
+  - `background.js`: Cross-origin fetch bridge and session telemetry tracking.
+  - `popup.html/js`: The UI shown when clicking the extension icon.

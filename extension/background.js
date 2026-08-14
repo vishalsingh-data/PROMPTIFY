@@ -1,4 +1,15 @@
+let stats = {
+  analyzed: 0,
+  warned: 0,
+  blocked: 0
+};
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.type === "GET_STATS") {
+    sendResponse({ success: true, stats: stats });
+    return false; // synchronous response
+  }
+
   if (request.type === "ANALYZE_PROMPT") {
     console.log("[Promptify] Sending prompt to local core for analysis...", request.prompt);
 
@@ -20,6 +31,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       })
       .then((data) => {
         console.log("[Promptify] Core response:", data);
+        
+        // Update stats
+        stats.analyzed++;
+        if (data.decision === "Warn") stats.warned++;
+        if (data.decision === "Block") stats.blocked++;
+
         sendResponse({ success: true, data: data });
       })
       .catch((error) => {
