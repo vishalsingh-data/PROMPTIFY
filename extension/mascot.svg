@@ -1,0 +1,104 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+<style>
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
+    }
+    @keyframes eye-blink {
+      0%, 90%, 100% { transform: scaleY(1); }
+      95% { transform: scaleY(0.1); }
+    }
+    @keyframes leg-wiggle-left {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(-5deg); }
+    }
+    @keyframes leg-wiggle-right {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(5deg); }
+    }
+    @keyframes wave-hello {
+      0%, 100% { transform: rotate(0deg); }
+      25% { transform: rotate(-25deg); }
+      75% { transform: rotate(10deg); }
+    }
+    @keyframes lens-move {
+      0%, 100% { transform: translate(0, 0) rotate(0deg); }
+      25% { transform: translate(3px, -2px) rotate(5deg); }
+      75% { transform: translate(-3px, 1px) rotate(-5deg); }
+    }
+    @keyframes glow-pulse {
+      0%, 100% { filter: drop-shadow(0 0 2px #A3E635); }
+      50% { filter: drop-shadow(0 0 6px #A3E635); }
+    }
+    .spider-char {
+      animation: float 3s ease-in-out infinite;
+      transform-origin: center;
+    }
+    .eye-main {
+      fill: white;
+      transform-origin: center;
+      animation: eye-blink 4s infinite;
+    }
+    .leg-left {
+      transform-origin: 40px 50px;
+      animation: leg-wiggle-left 1.5s ease-in-out infinite;
+    }
+    .leg-right {
+      transform-origin: 60px 50px;
+      animation: leg-wiggle-right 1.5s ease-in-out infinite;
+    }
+    .leg-wave {
+      transform-origin: 35px 45px;
+      animation: wave-hello 1.5s ease-in-out infinite;
+    }
+    .magnifier {
+      animation: lens-move 4s ease-in-out infinite;
+      transform-origin: center;
+    }
+    .accent-glow {
+      animation: glow-pulse 2s ease-in-out infinite;
+    }
+  </style>
+<!-- Background container -->
+<rect fill="transparent" height="100" width="100"></rect>
+<g class="spider-char">
+<!-- Legs (Wiggling) -->
+<g fill="none" stroke="#52525b" stroke-linecap="round" stroke-width="3">
+<!-- Waving Leg -->
+<path class="leg-wave" d="M35 45 Q20 30 10 40"></path>
+<path class="leg-left" d="M35 55 Q20 60 15 75" style="animation-delay: 0.2s"></path>
+<path class="leg-right" d="M65 45 Q80 40 85 55"></path>
+<path class="leg-right" d="M65 55 Q80 60 85 75" style="animation-delay: 0.2s"></path>
+</g>
+<!-- Main Body (Rounder/Cuter) -->
+<circle cx="50" cy="55" fill="#71717a" r="22"></circle>
+<circle cx="50" cy="55" fill="#52525b" opacity="0.3" r="18"></circle>
+<!-- Big Cute Smile -->
+<path d="M42 62 Q50 68 58 62" fill="none" stroke="white" stroke-linecap="round" stroke-width="2"></path>
+<!-- Large Focused Eyes -->
+<circle class="eye-main" cx="42" cy="52" r="6"></circle>
+<circle class="eye-main" cx="58" cy="52" r="6"></circle>
+<!-- Pupils -->
+<circle cx="43" cy="51" fill="#18181b" r="2"></circle>
+<circle cx="57" cy="51" fill="#18181b" r="2"></circle>
+<!-- Secondary Eyes -->
+<circle cx="34" cy="58" fill="white" opacity="0.8" r="1.5"></circle>
+<circle cx="66" cy="58" fill="white" opacity="0.8" r="1.5"></circle>
+<!-- Detective Hat -->
+<path d="M32 38 L68 38 L72 46 L28 46 Z" fill="#94A3B8"></path>
+<path d="M40 38 L40 30 Q50 28 60 30 L60 38" fill="#94A3B8" stroke="#64748b" stroke-width="1"></path>
+<rect fill="#475569" height="2" width="36" x="32" y="42"></rect>
+<!-- Pedipalps holding Magnifier -->
+<g class="magnifier">
+<path class="accent-glow" d="M45 68 Q50 75 55 68" fill="none" stroke="#A3E635" stroke-linecap="round" stroke-width="3"></path>
+<!-- Magnifying Glass -->
+<g transform="translate(50, 78)">
+<circle cx="0" cy="0" fill="#2DD4BF" opacity="0.2" r="10"></circle>
+<circle cx="0" cy="0" fill="none" r="10" stroke="#94A3B8" stroke-width="2"></circle>
+<line stroke="#94A3B8" stroke-linecap="round" stroke-width="3" x1="7" x2="12" y1="7" y2="12"></line>
+<!-- Reflection -->
+<path d="M-5 -3 Q0 -5 5 -3" fill="none" opacity="0.6" stroke="white" stroke-linecap="round" stroke-width="1"></path>
+</g>
+</g>
+</g>
+</svg>

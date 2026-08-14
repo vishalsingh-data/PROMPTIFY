@@ -26,5 +26,11 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "Promptify"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["mascot.svg"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

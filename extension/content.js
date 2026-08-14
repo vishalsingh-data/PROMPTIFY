@@ -214,7 +214,10 @@ function showModalPanel(target, data, originalPrompt, type, successCallback) {
     </style>
     <div class="overlay">
       <div class="modal">
-        <div class="header">${titleText}</div>
+        <div class="header">
+          <img src="${chrome.runtime.getURL('mascot.svg')}" alt="Promptify" style="width: 24px; height: 24px; margin-right: 8px;">
+          ${titleText}
+        </div>
         <div class="body">
           <div class="score">Risk Score: ${data.risk_score}</div>
           <div class="summary">${data.explanation.summary}</div>
@@ -356,7 +359,9 @@ function censorIncomingResponse(element, data) {
   overlay.style.minWidth = "250px";
 
   overlay.innerHTML = `
-    <div style="font-size: 24px; margin-bottom: 8px;">🛑</div>
+    <div style="margin-bottom: 12px; display: flex; justify-content: center;">
+      <img src="${chrome.runtime.getURL('mascot.svg')}" alt="Promptify Mascot" style="width: 48px; height: 48px; filter: drop-shadow(0 0 8px rgba(0,0,0,0.3));">
+    </div>
     <h3 style="margin: 0 0 8px 0; font-size: 16px;">Malicious Response Blocked</h3>
     <p style="margin: 0 0 16px 0; font-size: 13px; opacity: 0.9;">Score: ${data.risk_score} | ${data.explanation.summary}</p>
     <button id="promptify-reveal-btn" style="background: #fff; color: #f44336; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer;">Reveal Anyway</button>
