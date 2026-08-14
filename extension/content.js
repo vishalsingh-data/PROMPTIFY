@@ -318,16 +318,17 @@ const observer = new MutationObserver((mutations) => {
         target = target.parentElement;
       }
       
-      // Specifically target likely LLM output containers (avoiding generic "div" to prevent capturing the whole page)
+      // Specifically target likely LLM output containers. 
+      // If the mutation happens outside these (like a sidebar updating), IGNORE IT!
       const likelyContainer = target.closest('[data-message-author-role="assistant"], .markdown');
       if (likelyContainer) {
         activelyMutatingElement = likelyContainer;
-      } else {
-        // Fallback: If no generic class is found, track the nearest block element
-        activelyMutatingElement = target.closest('p, li, blockquote, pre') || target.parentElement;
       }
     }
   }
+
+  // If no valid LLM container mutated, ignore
+  if (!activelyMutatingElement) return;
 
   // Reset the timer. If 1500ms passes without DOM changes, we assume generation is finished!
   clearTimeout(responseDebounceTimer);
