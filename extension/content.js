@@ -14,6 +14,43 @@ let isAwaitingResponse = false;
 
 // Track the most recently used text input
 document.body.addEventListener("focusin", (event) => {
+
+// ==========================================
+// FLOATING MASCOT WIDGET
+// ==========================================
+let floatingWidget = null;
+function initFloatingWidget() {
+  if (document.getElementById('promptify-floating-widget')) return;
+  
+  floatingWidget = document.createElement('div');
+  floatingWidget.id = 'promptify-floating-widget';
+  Object.assign(floatingWidget.style, {
+    position: 'fixed',
+    bottom: '20px',
+    left: '20px',
+    zIndex: '2147483646',
+    transition: 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+    cursor: 'help',
+    filter: 'drop-shadow(0 4px 12px rgba(0,0,0,0.5))'
+  });
+
+  const mascotImg = document.createElement('img');
+  mascotImg.src = chrome.runtime.getURL('mascot.svg');
+  mascotImg.style.width = '64px';
+  mascotImg.style.height = '64px';
+  mascotImg.style.transition = 'all 0.3s';
+  mascotImg.id = 'promptify-mascot-img';
+  
+  // Add hover effect
+  floatingWidget.addEventListener('mouseenter', () => mascotImg.style.transform = 'scale(1.1) translateY(-5px)');
+  floatingWidget.addEventListener('mouseleave', () => mascotImg.style.transform = 'scale(1) translateY(0)');
+
+  floatingWidget.appendChild(mascotImg);
+  document.body.appendChild(floatingWidget);
+}
+
+// Initialize immediately
+initFloatingWidget();
   const target = event.target;
   if (target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && target.type === "text") || target.isContentEditable) {
     lastActiveInput = target;
@@ -163,6 +200,8 @@ function submitOriginalClickEvent(target) {
 // ==========================================
 
 function showModalPanel(target, data, originalPrompt, type, successCallback) {
+  if (floatingWidget) floatingWidget.style.opacity = '0';
+
   const host = document.createElement('div');
   document.body.appendChild(host);
   const shadowRoot = host.attachShadow({ mode: 'open' });
@@ -183,12 +222,17 @@ function showModalPanel(target, data, originalPrompt, type, successCallback) {
       .modal {
         background: #1e1e2e; color: #fff; width: 400px; border-radius: 12px;
         box-shadow: 0 10px 30px rgba(0,0,0,0.5); overflow: hidden;
-        border: 1px solid rgba(255,255,255,0.1); animation: scaleIn 0.2s ease-out;
+        border: 1px solid rgba(255,255,255,0.1); 
+        animation: flyIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        transform-origin: bottom left;
       }
-      @keyframes scaleIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+      @keyframes flyIn { 
+        0% { transform: translate(-40vw, 40vh) scale(0.1); opacity: 0; } 
+        100% { transform: translate(0, 0) scale(1); opacity: 1; } 
+      }
       .header {
         background: ${colorPrimary}; padding: 16px 20px; font-weight: bold; font-size: 16px;
-        border-bottom: 2px solid ${colorSecondary};
+        border-bottom: 2px solid ${colorSecondary}; display: flex; align-items: center;
       }
       .body { padding: 20px; }
       .summary { font-size: 15px; margin-bottom: 16px; line-height: 1.5; }
@@ -215,7 +259,7 @@ function showModalPanel(target, data, originalPrompt, type, successCallback) {
     <div class="overlay">
       <div class="modal">
         <div class="header">
-          <img src="${chrome.runtime.getURL('mascot.svg')}" alt="Promptify" style="width: 24px; height: 24px; margin-right: 8px;">
+          <img src="${chrome.runtime.getURL('mascot.svg')}" alt="Promptify" style="width: 28px; height: 28px; margin-right: 12px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));">
           ${titleText}
         </div>
         <div class="body">
@@ -233,7 +277,10 @@ function showModalPanel(target, data, originalPrompt, type, successCallback) {
     </div>
   `;
 
-  shadowRoot.getElementById('btn-cancel').addEventListener('click', () => host.remove());
+  shadowRoot.getElementById('btn-cancel').addEventListener('click', () => {
+    host.remove();
+    if (floatingWidget) floatingWidget.style.opacity = '1';
+  });
 
   let overrideConfirmState = false;
   const btnOverride = shadowRoot.getElementById('btn-override');
@@ -244,6 +291,7 @@ function showModalPanel(target, data, originalPrompt, type, successCallback) {
       btnOverride.classList.add('confirming');
     } else {
       host.remove();
+      if (floatingWidget) floatingWidget.style.opacity = '1';
       if (isBlock) setInputValue(target, originalPrompt);
       console.log("[Promptify] Prompt override submitted. Awaiting LLM response...");
       isAwaitingResponse = true;
@@ -327,6 +375,8 @@ async function finishResponseGeneration() {
 }
 
 function censorIncomingResponse(element, data) {
+  if (floatingWidget) floatingWidget.style.opacity = '0';
+
   // Visually blur and block out the malicious text in the DOM
   element.style.position = "relative";
   
@@ -347,7 +397,8 @@ function censorIncomingResponse(element, data) {
   overlay.style.position = "absolute";
   overlay.style.top = "50%";
   overlay.style.left = "50%";
-  overlay.style.transform = "translate(-50%, -50%)";
+  overlay.style.transform = "translate(-50%, -50%) scale(0.1)";
+  overlay.style.opacity = "0";
   overlay.style.background = "rgba(244, 67, 54, 0.95)";
   overlay.style.color = "#fff";
   overlay.style.padding = "16px 24px";
@@ -357,6 +408,13 @@ function censorIncomingResponse(element, data) {
   overlay.style.fontFamily = "-apple-system, sans-serif";
   overlay.style.zIndex = "10";
   overlay.style.minWidth = "250px";
+  overlay.style.transition = "all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)";
+  
+  // Trigger animation after append
+  setTimeout(() => {
+    overlay.style.transform = "translate(-50%, -50%) scale(1)";
+    overlay.style.opacity = "1";
+  }, 50);
 
   overlay.innerHTML = `
     <div style="margin-bottom: 12px; display: flex; justify-content: center;">
@@ -371,6 +429,7 @@ function censorIncomingResponse(element, data) {
 
   overlay.querySelector('#promptify-reveal-btn').addEventListener('click', () => {
     overlay.remove();
+    if (floatingWidget) floatingWidget.style.opacity = '1';
     wrapper.style.filter = "none";
     wrapper.style.userSelect = "auto";
     wrapper.style.pointerEvents = "auto";
