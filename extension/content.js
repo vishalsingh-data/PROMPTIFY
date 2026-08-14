@@ -318,11 +318,16 @@ const observer = new MutationObserver((mutations) => {
         target = target.parentElement;
       }
       
-      // Specifically target likely LLM output containers. 
-      // If the mutation happens outside these (like a sidebar updating), IGNORE IT!
-      const likelyContainer = target.closest('[data-message-author-role="assistant"], .markdown');
+      // specifically target likely LLM output containers (avoiding generic "div" to prevent capturing the whole page)
+      const likelyContainer = target.closest('[data-message-author-role="assistant"], .markdown, .font-claude-message, [data-testid^="conversation-turn-"]');
       if (likelyContainer) {
         activelyMutatingElement = likelyContainer;
+      } else if (!activelyMutatingElement) {
+        // Fallback: If no generic class is found, track the nearest block element but DONT let it bubble to the body
+        let block = target.closest('p, li, blockquote, pre, div');
+        if (block && block.tagName !== 'BODY' && block.tagName !== 'MAIN') {
+           activelyMutatingElement = block;
+        }
       }
     }
   }
@@ -345,7 +350,7 @@ async function finishResponseGeneration() {
   isAwaitingResponse = false; // Reset flag so we don't double-analyze
   
   // Walk up a bit to get the full message container if we're only tracking a paragraph
-  let responseContainer = activelyMutatingElement.closest('[data-message-author-role="assistant"], .markdown') || activelyMutatingElement;
+  let responseContainer = activelyMutatingElement.closest('[data-message-author-role="assistant"], .markdown, .font-claude-message, [data-testid^="conversation-turn-"]') || activelyMutatingElement;
   
   const responseText = responseContainer.innerText || responseContainer.textContent;
   
