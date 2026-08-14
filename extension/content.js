@@ -124,6 +124,7 @@ async function handlePromptSubmission(originalEvent, inputTarget, successCallbac
       } else if (data.decision === "Warn") {
         showModalPanel(inputTarget, data, promptText, "Warn", successCallback);
       } else {
+        console.log("[Promptify] Prompt allowed. Awaiting LLM response...");
         isAwaitingResponse = true; // Tell the observer to watch for the LLM's response
         successCallback();
       }
@@ -241,6 +242,7 @@ function showModalPanel(target, data, originalPrompt, type, successCallback) {
     } else {
       host.remove();
       if (isBlock) setInputValue(target, originalPrompt);
+      console.log("[Promptify] Prompt override submitted. Awaiting LLM response...");
       isAwaitingResponse = true;
       setTimeout(() => successCallback(), 50);
     }
@@ -264,8 +266,15 @@ const observer = new MutationObserver((mutations) => {
       if (target.nodeType === Node.TEXT_NODE) {
         target = target.parentElement;
       }
-      // Usually LLM responses are wrapped in generic blocks
-      activelyMutatingElement = target.closest('article, [data-message-author-role="assistant"], .markdown, div.prose, div');
+      
+      // Specifically target likely LLM output containers (avoiding generic "div" to prevent capturing the whole page)
+      const likelyContainer = target.closest('article, [data-message-author-role="assistant"], .markdown, .prose');
+      if (likelyContainer) {
+        activelyMutatingElement = likelyContainer;
+      } else {
+        // Fallback: If no generic class is found, track the nearest block element
+        activelyMutatingElement = target.closest('p, li, blockquote, pre') || target.parentElement;
+      }
     }
   }
 
@@ -280,15 +289,19 @@ observer.observe(document.body, { childList: true, subtree: true, characterData:
 
 async function finishResponseGeneration() {
   if (!isAwaitingResponse || !activelyMutatingElement) return;
-  isAwaitingResponse = false; // Reset flag
-
-  // Walk up a bit to get the full message container if it's deeply nested
-  let responseContainer = activelyMutatingElement.closest('article, [data-message-author-role="assistant"], div.markdown') || activelyMutatingElement;
+  
+  isAwaitingResponse = false; // Reset flag so we don't double-analyze
+  
+  // Walk up a bit to get the full message container if we're only tracking a paragraph
+  let responseContainer = activelyMutatingElement.closest('article, [data-message-author-role="assistant"], div.markdown, .prose') || activelyMutatingElement;
   
   const responseText = responseContainer.innerText || responseContainer.textContent;
-  if (!responseText || responseText.length < 10) return;
+  
+  console.log(`[Promptify] Extracted Response (${responseText?.length || 0} chars):`, responseText);
 
-  console.log("[Promptify] LLM Response Finished Generating. Analyzing...");
+  if (!responseText || responseText.length < 5) return;
+
+  console.log("[Promptify] LLM Response Finished Generating. Sending to local proxy for analysis...");
 
   try {
     const res = await new Promise((resolve) => {
@@ -297,6 +310,8 @@ async function finishResponseGeneration() {
         resolve
       );
     });
+
+    console.log("[Promptify] Incoming Response Decision:", res?.data?.decision);
 
     if (res && res.success) {
       if (res.data.decision === "Block" || res.data.decision === "Warn") {
@@ -330,7 +345,7 @@ function censorIncomingResponse(element, data) {
   overlay.style.top = "50%";
   overlay.style.left = "50%";
   overlay.style.transform = "translate(-50%, -50%)";
-  overlay.style.background = "rgba(244, 67, 54, 0.9)";
+  overlay.style.background = "rgba(244, 67, 54, 0.95)";
   overlay.style.color = "#fff";
   overlay.style.padding = "16px 24px";
   overlay.style.borderRadius = "8px";
