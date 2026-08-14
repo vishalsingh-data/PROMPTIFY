@@ -1,13 +1,16 @@
 /**
- * PROMPTIFY CONTENT SCRIPT (Generic UI Interceptor with Modal Popup)
+ * PROMPTIFY CONTENT SCRIPT (Generic UI Interceptor & Incoming Response Analyzer)
  * 
  * Intercepts Enter keypresses AND Send Button clicks across any LLM site.
+ * Observes the DOM to generically detect when incoming LLM responses finish 
+ * generating, and analyzes them for malicious content.
  */
 
 console.log("[Promptify] Generic UI Interceptor loaded on", window.location.hostname);
 
 let isSynthesizingEvent = false;
 let lastActiveInput = null;
+let isAwaitingResponse = false;
 
 // Track the most recently used text input
 document.body.addEventListener("focusin", (event) => {
@@ -46,30 +49,20 @@ document.body.addEventListener("mousedown", async (event) => {
   if (isSynthesizingEvent) return;
   if (!lastActiveInput) return;
 
-  // Find if the clicked element (or its parents) looks like a submit button
   const clickedBtn = event.target.closest('button, [role="button"], [aria-label*="end"], [aria-label*="ubmit"], [data-testid*="send"]');
   
   if (clickedBtn) {
-    // Check if this button is physically close to our lastActiveInput in the DOM tree
-    // This generic heuristic ensures we only intercept the send button for the chat, not a random button
     if (isNodeCloselyRelated(lastActiveInput, clickedBtn, 6)) {
-      
-      // If the input is empty, no need to intercept
       let promptText = getInputValue(lastActiveInput);
       if (!promptText) return;
 
-      // Intercept the click!
       await handlePromptSubmission(event, lastActiveInput, () => {
         submitOriginalClickEvent(clickedBtn);
       });
     }
   }
-}, true); // Capturing phase to catch it before React onClick handlers
+}, true);
 
-/**
- * Checks if two DOM nodes share a common ancestor within a certain depth.
- * This is a highly robust generic way to check if a Send button belongs to a Chat input!
- */
 function isNodeCloselyRelated(node1, node2, maxDepth) {
   let ancestor1 = node1;
   for (let i = 0; i < maxDepth && ancestor1; i++) {
@@ -102,16 +95,11 @@ function setInputValue(target, text) {
   target.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-/**
- * Core generic submission handler logic
- */
 async function handlePromptSubmission(originalEvent, inputTarget, successCallback) {
   let promptText = getInputValue(inputTarget);
   if (!promptText) return;
 
   console.log("[Promptify] Intercepted prompt submission:", promptText);
-
-  // Stop the original event (Enter key or Mouse click)
   originalEvent.preventDefault();
   originalEvent.stopImmediatePropagation();
 
@@ -136,15 +124,18 @@ async function handlePromptSubmission(originalEvent, inputTarget, successCallbac
       } else if (data.decision === "Warn") {
         showModalPanel(inputTarget, data, promptText, "Warn", successCallback);
       } else {
+        isAwaitingResponse = true; // Tell the observer to watch for the LLM's response
         successCallback();
       }
     } else {
       console.error("[Promptify] Local proxy down, allowing.", response?.error);
+      isAwaitingResponse = true;
       successCallback();
     }
   } catch (err) {
     console.error("[Promptify] Error:", err);
     inputTarget.style.opacity = originalOpacity;
+    isAwaitingResponse = true;
     successCallback();
   }
 }
@@ -160,7 +151,6 @@ function submitOriginalKeyEvent(target) {
 
 function submitOriginalClickEvent(target) {
   isSynthesizingEvent = true;
-  // Dispatch a full click sequence just to be safe with React
   target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, composed: true }));
   target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, composed: true }));
   target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
@@ -168,7 +158,7 @@ function submitOriginalClickEvent(target) {
 }
 
 // ==========================================
-// CENTERED MODAL UI INJECTION
+// OUTGOING MODAL UI INJECTION
 // ==========================================
 
 function showModalPanel(target, data, originalPrompt, type, successCallback) {
@@ -239,12 +229,10 @@ function showModalPanel(target, data, originalPrompt, type, successCallback) {
     </div>
   `;
 
-  const btnCancel = shadowRoot.getElementById('btn-cancel');
-  const btnOverride = shadowRoot.getElementById('btn-override');
-
-  btnCancel.addEventListener('click', () => host.remove());
+  shadowRoot.getElementById('btn-cancel').addEventListener('click', () => host.remove());
 
   let overrideConfirmState = false;
+  const btnOverride = shadowRoot.getElementById('btn-override');
   btnOverride.addEventListener('click', () => {
     if (!overrideConfirmState) {
       overrideConfirmState = true;
@@ -253,7 +241,118 @@ function showModalPanel(target, data, originalPrompt, type, successCallback) {
     } else {
       host.remove();
       if (isBlock) setInputValue(target, originalPrompt);
+      isAwaitingResponse = true;
       setTimeout(() => successCallback(), 50);
     }
+  });
+}
+
+// ==========================================
+// INCOMING RESPONSE ANALYZER (DOM MUTATION)
+// ==========================================
+
+let responseDebounceTimer = null;
+let activelyMutatingElement = null;
+
+const observer = new MutationObserver((mutations) => {
+  if (!isAwaitingResponse) return;
+
+  // Find the deepest element that is actively receiving text
+  for (const mutation of mutations) {
+    if (mutation.type === "characterData" || mutation.type === "childList") {
+      let target = mutation.target;
+      if (target.nodeType === Node.TEXT_NODE) {
+        target = target.parentElement;
+      }
+      // Usually LLM responses are wrapped in generic blocks
+      activelyMutatingElement = target.closest('article, [data-message-author-role="assistant"], .markdown, div.prose, div');
+    }
+  }
+
+  // Reset the timer. If 1500ms passes without DOM changes, we assume generation is finished!
+  clearTimeout(responseDebounceTimer);
+  responseDebounceTimer = setTimeout(() => {
+    finishResponseGeneration();
+  }, 1500);
+});
+
+observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+async function finishResponseGeneration() {
+  if (!isAwaitingResponse || !activelyMutatingElement) return;
+  isAwaitingResponse = false; // Reset flag
+
+  // Walk up a bit to get the full message container if it's deeply nested
+  let responseContainer = activelyMutatingElement.closest('article, [data-message-author-role="assistant"], div.markdown') || activelyMutatingElement;
+  
+  const responseText = responseContainer.innerText || responseContainer.textContent;
+  if (!responseText || responseText.length < 10) return;
+
+  console.log("[Promptify] LLM Response Finished Generating. Analyzing...");
+
+  try {
+    const res = await new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { type: "ANALYZE_PROMPT", prompt: responseText, source_url: window.location.href },
+        resolve
+      );
+    });
+
+    if (res && res.success) {
+      if (res.data.decision === "Block" || res.data.decision === "Warn") {
+        censorIncomingResponse(responseContainer, res.data);
+      }
+    }
+  } catch (err) {
+    console.error("[Promptify] Error analyzing response:", err);
+  }
+}
+
+function censorIncomingResponse(element, data) {
+  // Visually blur and block out the malicious text in the DOM
+  element.style.position = "relative";
+  
+  // Wrap existing content to blur it
+  const wrapper = document.createElement('div');
+  wrapper.style.filter = "blur(8px)";
+  wrapper.style.userSelect = "none";
+  wrapper.style.pointerEvents = "none";
+  
+  // Move all children into wrapper
+  while (element.firstChild) {
+    wrapper.appendChild(element.firstChild);
+  }
+  element.appendChild(wrapper);
+
+  // Create an overlay warning box
+  const overlay = document.createElement('div');
+  overlay.style.position = "absolute";
+  overlay.style.top = "50%";
+  overlay.style.left = "50%";
+  overlay.style.transform = "translate(-50%, -50%)";
+  overlay.style.background = "rgba(244, 67, 54, 0.9)";
+  overlay.style.color = "#fff";
+  overlay.style.padding = "16px 24px";
+  overlay.style.borderRadius = "8px";
+  overlay.style.boxShadow = "0 8px 24px rgba(0,0,0,0.5)";
+  overlay.style.textAlign = "center";
+  overlay.style.fontFamily = "-apple-system, sans-serif";
+  overlay.style.zIndex = "10";
+  overlay.style.minWidth = "250px";
+
+  overlay.innerHTML = `
+    <div style="font-size: 24px; margin-bottom: 8px;">🛑</div>
+    <h3 style="margin: 0 0 8px 0; font-size: 16px;">Malicious Response Blocked</h3>
+    <p style="margin: 0 0 16px 0; font-size: 13px; opacity: 0.9;">Score: ${data.risk_score} | ${data.explanation.summary}</p>
+    <button id="promptify-reveal-btn" style="background: #fff; color: #f44336; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer;">Reveal Anyway</button>
+  `;
+
+  element.appendChild(overlay);
+
+  overlay.querySelector('#promptify-reveal-btn').addEventListener('click', () => {
+    overlay.remove();
+    wrapper.style.filter = "none";
+    wrapper.style.userSelect = "auto";
+    wrapper.style.pointerEvents = "auto";
   });
 }
