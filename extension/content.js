@@ -12,9 +12,6 @@ let isSynthesizingEvent = false;
 let lastActiveInput = null;
 let isAwaitingResponse = false;
 
-// Track the most recently used text input
-document.body.addEventListener("focusin", (event) => {
-
 // ==========================================
 // FLOATING MASCOT WIDGET
 // ==========================================
@@ -51,6 +48,9 @@ function initFloatingWidget() {
 
 // Initialize immediately
 initFloatingWidget();
+
+// Track the most recently used text input
+document.body.addEventListener("focusin", (event) => {
   const target = event.target;
   if (target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && target.type === "text") || target.isContentEditable) {
     lastActiveInput = target;
