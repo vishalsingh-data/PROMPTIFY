@@ -13,7 +13,7 @@ from collections import Counter
 # Entropy threshold above which a prompt is considered potentially suspicious.
 # High entropy correlates with Base64, hex, or otherwise obfuscated payloads.
 # This value is tuned in Phase 3 using labelled data.
-ENTROPY_THRESHOLD: float = 4.5
+ENTROPY_THRESHOLD: float = 5.0
 
 
 def analyze(text: str) -> dict:
